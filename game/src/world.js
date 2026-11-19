@@ -109,11 +109,13 @@ export class World {
   policeUnits() { return [...this.cars.filter(c => c.kind === 'police' && !c.wrecked), ...this.peds.filter(p => p.kind === 'officer' && !p.dead)]; }
   updateWanted(dt) {
     let seen = false;
-    for (const u of this.policeUnits()) if (dist(u.x, u.y, this.player.x, this.player.y) < 720 && lineOfSight(this.city, u.x, u.y, this.player.x, this.player.y)) { seen = true; break; }
-    this.lastSeenT = seen ? 0 : this.lastSeenT + dt;
+    const safe = placeById(this.city, 'safehouse');
+    const nearSafe = dist(this.player.x, this.player.y, safe.x, safe.y) < 150;
+    for (const u of this.policeUnits()) if (dist(u.x, u.y, this.player.x, this.player.y) < (nearSafe ? 380 : 720) && lineOfSight(this.city, u.x, u.y, this.player.x, this.player.y)) { seen = true; break; }
+    if (seen) { this.lastSeenT = 0; this.lastSeenX = this.player.x; this.lastSeenY = this.player.y; }
+    else this.lastSeenT = this.lastSeenT + dt;
     if (this.lastSeenT > WANTED.grace && this.heat > 0) {
-      const safe = placeById(this.city, 'safehouse');
-      const boost = dist(this.player.x, this.player.y, safe.x, safe.y) < 150 ? WANTED.hideBoost : 1;
+      const boost = nearSafe ? WANTED.hideBoost : 1;
       this.heat = Math.max(0, this.heat - WANTED.decay * boost * dt);
     }
     // Police director: keep roughly one patrol car per star in play.
@@ -345,6 +347,8 @@ export class World {
       const lead = 0.35, px = p.x + Math.cos(p.a) * p.speed * lead, py = p.y + Math.sin(p.a) * p.speed * lead;
       const perp = car.flank * 85;
       tx = px + -Math.sin(p.a) * perp * (d < 320 ? 1 : 0); ty = py + Math.cos(p.a) * perp * (d < 320 ? 1 : 0);
+    } else if (this.lastSeenT > 5 && this.lastSeenX !== undefined) {
+      tx = this.lastSeenX; ty = this.lastSeenY; // search the last confirmed sighting, not the player
     } else {
       let best = this.city.intersections[0], bd = 1e12;
       for (const n of this.city.intersections) { const dd = dist(p.x, p.y, n.x, n.y); if (dd < bd) { bd = dd; best = n; } }
@@ -391,6 +395,8 @@ export class World {
   }
   updateOfficer(ped, dt) {
     const p = this.player, d = dist(ped.x, ped.y, p.x, p.y);
+    if (this.lastSeenT > 12) { ped.dead = true; ped.deadT = 0; return; } // lost the trail: stand down
+    if (this.lastSeenT > 5 && this.lastSeenX !== undefined && d > 60) { this.walkPed(ped, this.lastSeenX, this.lastSeenY, 210, dt); return; } // search last sighting
     if (p.car) { // suspect fled by car: climb back in and resume the chase
       if (ped.car && !ped.car.wrecked) { if (dist(ped.x, ped.y, ped.car.x, ped.car.y) < 42) { ped.dead = true; ped.deadT = 0; ped.car.officersOut = false; } else this.walkPed(ped, ped.car.x, ped.car.y, 230, dt); }
       else { ped.dead = true; ped.deadT = 0; }
