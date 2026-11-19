@@ -33,6 +33,38 @@ export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   let minimapBase = null;
   let minimapCity = null;
+  // Smooth camera state: the view glides after the player with a touch of
+  // lookahead in the direction of travel, instead of locking rigidly on.
+  let smoothCam = null;
+  let vignette = null;
+
+  function currentCamera(world) {
+    const base = cameraFor(world);
+    const p = world.player;
+    let lx = 0, ly = 0;
+    if (p.car) {
+      const lead = Math.min(110, Math.abs(p.car.speed) * 0.24);
+      lx = Math.cos(p.car.angle) * lead * Math.sign(p.car.speed || 1);
+      ly = Math.sin(p.car.angle) * lead * Math.sign(p.car.speed || 1);
+    } else {
+      lx = Math.cos(p.angle) * 26;
+      ly = Math.sin(p.angle) * 26;
+    }
+    const target = {
+      x: clamp(base.x + lx, 0, Math.max(0, WORLD.width - VIEW.width)),
+      y: clamp(base.y + ly, 0, Math.max(0, WORLD.height - VIEW.height)),
+    };
+    if (!smoothCam) smoothCam = { ...target };
+    else {
+      smoothCam.x += (target.x - smoothCam.x) * 0.13;
+      smoothCam.y += (target.y - smoothCam.y) * 0.13;
+    }
+    const shake = world.shake || 0;
+    return {
+      x: smoothCam.x + (shake ? (Math.random() * 2 - 1) * shake : 0),
+      y: smoothCam.y + (shake ? (Math.random() * 2 - 1) * shake : 0),
+    };
+  }
 
   function buildMinimap(city) {
     const w = 264, h = 198;
@@ -117,6 +149,25 @@ export function createRenderer(canvas) {
       if (y === 0) ctx.moveTo(fx, y); else ctx.lineTo(fx, y);
     }
     ctx.stroke();
+    // Neon reflections: as the light drops, the shore signs smear down the
+    // water in shimmering columns — the bay's signature postcard detail.
+    if (light.dark > 0.18) {
+      const neon = ['#ff2e88', '#22d3ee', '#ffb703', '#06d6a0', '#c77dff', '#ff7b54'];
+      ctx.lineWidth = 5;
+      for (let i = 0; i < 26; i += 1) {
+        const wy = ((i * 149 + Math.floor(cam.y)) % (VIEW.height + 120)) - 60;
+        const wob = Math.sin(t * 2.2 + i * 1.7) * 7;
+        const wx = WORLD.waterX - cam.x + 16 + (i % 5) * 30 + wob;
+        if (wx > VIEW.width + 30) continue;
+        ctx.strokeStyle = neon[i % neon.length];
+        ctx.globalAlpha = light.dark * (0.10 + 0.07 * (0.5 + 0.5 * Math.sin(t * 3 + i * 2.3)));
+        ctx.beginPath();
+        ctx.moveTo(wx, wy);
+        ctx.lineTo(wx + Math.sin(t * 2.6 + i) * 5, wy + 26 + (i % 3) * 10);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
 
     // Parks and plazas.
     for (const p of city.parks) {
@@ -155,6 +206,47 @@ export function createRenderer(canvas) {
     ctx.fillStyle = PALETTE.asphalt;
     for (const r of city.roadsV) ctx.fillRect(r.x - half - cam.x, 0, ROADS.width, VIEW.height);
     for (const r of city.roadsH) ctx.fillRect(0, r.y - half - cam.y, VIEW.width, ROADS.width);
+    // Tyre-worn dark streaks down each lane and seams across the sidewalks:
+    // the cheap details that stop a road reading as a flat grey ribbon.
+    ctx.fillStyle = 'rgba(0,0,0,0.055)';
+    for (const r of city.roadsV) {
+      ctx.fillRect(r.x - ROADS.laneOffset - 13 - cam.x, 0, 26, VIEW.height);
+      ctx.fillRect(r.x + ROADS.laneOffset - 13 - cam.x, 0, 26, VIEW.height);
+    }
+    for (const r of city.roadsH) {
+      ctx.fillRect(0, r.y - ROADS.laneOffset - 13 - cam.y, VIEW.width, 26);
+      ctx.fillRect(0, r.y + ROADS.laneOffset - 13 - cam.y, VIEW.width, 26);
+    }
+    ctx.strokeStyle = 'rgba(0,0,0,0.10)';
+    ctx.lineWidth = 2;
+    for (const r of city.roadsV) {
+      for (let y = -(cam.y % 52); y < VIEW.height; y += 52) {
+        ctx.beginPath();
+        ctx.moveTo(r.x - half - 15 - cam.x, y); ctx.lineTo(r.x - half - 2 - cam.x, y);
+        ctx.moveTo(r.x + half + 2 - cam.x, y); ctx.lineTo(r.x + half + 15 - cam.x, y);
+        ctx.stroke();
+      }
+    }
+    for (const r of city.roadsH) {
+      for (let x = -(cam.x % 52); x < VIEW.width; x += 52) {
+        ctx.beginPath();
+        ctx.moveTo(x, r.y - half - 15 - cam.y); ctx.lineTo(x, r.y - half - 2 - cam.y);
+        ctx.moveTo(x, r.y + half + 2 - cam.y); ctx.lineTo(x, r.y + half + 15 - cam.y);
+        ctx.stroke();
+      }
+    }
+    // Worn patches and old repairs on the asphalt, placed deterministically.
+    ctx.fillStyle = 'rgba(0,0,0,0.07)';
+    for (let i = 0; i < city.roadsV.length; i += 1) {
+      const r = city.roadsV[i];
+      for (let k = 0; k < 7; k += 1) {
+        const py = ((i * 613 + k * 887) % 3400) - cam.y;
+        if (py < -60 || py > VIEW.height + 60) continue;
+        ctx.beginPath();
+        ctx.ellipse(r.x + ((k % 3) - 1) * 26 - cam.x, py, 30 + (k % 4) * 9, 17, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
     ctx.fillStyle = PALETTE.laneMark;
     for (const r of city.roadsV) {
       for (let y = -(cam.y % 64); y < VIEW.height; y += 64) ctx.fillRect(r.x - 2 - cam.x, y, 4, 34);
@@ -179,7 +271,13 @@ export function createRenderer(canvas) {
     for (const b of city.buildings) {
       if (!inView(b.x + b.w / 2, b.y + b.h / 2, Math.max(b.w, b.h))) continue;
       const x = b.x - cam.x, y = b.y - cam.y;
-      ctx.fillStyle = 'rgba(10,10,20,0.35)';
+      // Layered soft shadow: three passes, growing and fading, read as blur
+      // without paying for a canvas shadow pass per building.
+      ctx.fillStyle = 'rgba(10,10,20,0.10)';
+      ctx.fillRect(x + shX * 2.1, y + shY * 2.1, b.w, b.h);
+      ctx.fillStyle = 'rgba(10,10,20,0.16)';
+      ctx.fillRect(x + shX * 1.5, y + shY * 1.5, b.w, b.h);
+      ctx.fillStyle = 'rgba(10,10,20,0.30)';
       ctx.fillRect(x + shX, y + shY, b.w, b.h);
       ctx.fillStyle = b.wall;
       ctx.fillRect(x, y, b.w, b.h);
@@ -252,8 +350,11 @@ export function createRenderer(canvas) {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(car.angle);
-    ctx.fillStyle = 'rgba(8,8,16,0.4)';
-    ctx.fillRect(-CAR.length / 2 + 4, -CAR.width / 2 + 6, CAR.length, CAR.width);
+    // Soft two-pass shadow so the car sits on the road instead of pasted on.
+    ctx.fillStyle = 'rgba(8,8,16,0.16)';
+    ctx.beginPath(); ctx.ellipse(7, 10, CAR.length * 0.58, CAR.width * 0.62, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(8,8,16,0.32)';
+    ctx.beginPath(); ctx.ellipse(4, 6, CAR.length * 0.52, CAR.width * 0.55, 0, 0, Math.PI * 2); ctx.fill();
     const wrecked = car.health <= 0;
     ctx.fillStyle = wrecked ? '#3c3c44' : car.color;
     roundRect(-CAR.length / 2, -CAR.width / 2, CAR.length, CAR.width, 10);
@@ -327,6 +428,18 @@ export function createRenderer(canvas) {
 
   function drawActors(world, cam, light) {
     const t = world.elapsed;
+    // Skid marks lie on the ground under everything that moves.
+    for (const s of world.skids) {
+      const x = s.x - cam.x, y = s.y - cam.y;
+      if (x < -20 || x > VIEW.width + 20 || y < -20 || y > VIEW.height + 20) continue;
+      const fade = clamp(s.ttl / s.maxT, 0, 1);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(s.angle);
+      ctx.fillStyle = s.sand ? `rgba(146,118,74,${0.4 * fade})` : `rgba(12,12,16,${0.42 * fade})`;
+      ctx.fillRect(-7, -2.5, 14, 5);
+      ctx.restore();
+    }
     // Pickups first, under everything alive.
     for (const pk of world.pickups) {
       const x = pk.x - cam.x, y = pk.y - cam.y + Math.sin(pk.bob) * 3;
@@ -383,6 +496,25 @@ export function createRenderer(canvas) {
       }
       drawPerson(p.x - cam.x, p.y - cam.y, p.angle, PALETTE.player, { gun: p.hasGun, cap: '#111' });
     }
+    // Muzzle flash: a brief star at the barrel, gone in two frames.
+    if (world.muzzle) {
+      const m = world.muzzle;
+      const x = m.x - cam.x, y = m.y - cam.y;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(m.angle);
+      ctx.globalAlpha = clamp(m.ttl / m.maxT, 0, 1);
+      ctx.shadowColor = '#ffd166';
+      ctx.shadowBlur = 14;
+      ctx.fillStyle = '#ffe9a8';
+      ctx.beginPath();
+      ctx.moveTo(26, 0); ctx.lineTo(8, -6); ctx.lineTo(12, 0); ctx.lineTo(8, 6);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ffb703';
+      ctx.beginPath(); ctx.arc(6, 0, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
     // Tracers and particles.
     for (const tr of world.tracers) {
       ctx.strokeStyle = tr.hostile ? 'rgba(255,90,90,0.9)' : 'rgba(255,240,180,0.95)';
@@ -403,6 +535,15 @@ export function createRenderer(canvas) {
   }
 
   function drawLighting(world, cam, light) {
+    // Dusk gradient: violet up top melting into warm amber near the ground.
+    if (light.warm > 0.03) {
+      const grad = ctx.createLinearGradient(0, 0, 0, VIEW.height);
+      grad.addColorStop(0, `rgba(58,30,96,${light.warm * 0.20})`);
+      grad.addColorStop(0.55, `rgba(255,110,64,${light.warm * 0.10})`);
+      grad.addColorStop(1, `rgba(255,170,80,${light.warm * 0.05})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+    }
     if (light.dark > 0.04) {
       ctx.fillStyle = `rgba(10,12,44,${light.dark * 0.52})`;
       ctx.fillRect(0, 0, VIEW.width, VIEW.height);
@@ -423,10 +564,34 @@ export function createRenderer(canvas) {
       ctx.fillRect(x - r, y - r, r * 2, r * 2);
     };
     for (const lamp of world.city.lamps) glow(lamp.x - cam.x, lamp.y - cam.y, 74, 'rgba(255,196,110,A)', 0.16);
+    // Neon signs bleed their colour onto the street around them.
+    for (const b of world.city.buildings) {
+      if (!b.sign) continue;
+      const bx = b.x + b.w / 2 - cam.x, by = b.y + b.h / 2 - cam.y;
+      if (bx < -90 || bx > VIEW.width + 90 || by < -90 || by > VIEW.height + 90) continue;
+      const hex = b.sign.color;
+      const r = parseInt(hex.slice(1, 3), 16), gcol = parseInt(hex.slice(3, 5), 16), bl = parseInt(hex.slice(5, 7), 16);
+      glow(bx, by, 96, `rgba(${r},${gcol},${bl},A)`, 0.10);
+    }
     for (const car of world.cars) {
       const hx = car.x + Math.cos(car.angle) * 60 - cam.x;
       const hy = car.y + Math.sin(car.angle) * 60 - cam.y;
       glow(hx, hy, 66, 'rgba(255,240,190,A)', 0.13);
+      // A proper headlight cone thrown ahead of every moving car.
+      const cxp = car.x - cam.x, cyp = car.y - cam.y;
+      if (cxp > -180 && cxp < VIEW.width + 180 && cyp > -180 && cyp < VIEW.height + 180) {
+        const fx = Math.cos(car.angle), fy = Math.sin(car.angle);
+        const rx = -fy, ry = fx;
+        const tipX = cxp + fx * 150, tipY = cyp + fy * 150;
+        ctx.fillStyle = 'rgba(255,240,190,0.045)';
+        ctx.beginPath();
+        ctx.moveTo(cxp + fx * 40 + rx * 15, cyp + fy * 40 + ry * 15);
+        ctx.lineTo(tipX + rx * 40, tipY + ry * 40);
+        ctx.lineTo(tipX - rx * 40, tipY - ry * 40);
+        ctx.lineTo(cxp + fx * 40 - rx * 15, cyp + fy * 40 - ry * 15);
+        ctx.closePath();
+        ctx.fill();
+      }
       if (car.kind === 'police' && car.driver !== null) {
         glow(car.x - cam.x, car.y - cam.y, 90, Math.floor(world.elapsed * 6) % 2 ? 'rgba(255,51,85,A)' : 'rgba(51,85,255,A)', 0.2);
       }
@@ -474,16 +639,24 @@ export function createRenderer(canvas) {
     ctx.fill();
     ctx.strokeStyle = 'rgba(245,242,234,0.18)';
     ctx.stroke();
+    // A hairline of neon along the top edge: the modern-HUD tell.
+    ctx.fillStyle = 'rgba(34,211,238,0.35)';
+    ctx.fillRect(x + 12, y + 1, w - 24, 2);
   }
 
+  let hudCam = null;
   function drawHUD(world, opts) {
     const p = world.player;
     // Money + health, top left.
     panel(16, 14, 252, 74);
+    ctx.save();
+    ctx.shadowColor = 'rgba(6,214,160,0.55)';
+    ctx.shadowBlur = 9;
     ctx.fillStyle = PALETTE.good;
     ctx.font = `bold 30px ${FONT}`;
     ctx.textAlign = 'left';
     ctx.fillText(`$${world.money.toLocaleString('en-US')}`, 30, 50);
+    ctx.restore();
     ctx.fillStyle = 'rgba(245,242,234,0.25)';
     ctx.fillRect(30, 62, 220, 10);
     const hpFrac = clamp(p.health / 100, 0, 1);
@@ -552,7 +725,7 @@ export function createRenderer(canvas) {
       const d = Math.hypot(target.x - p.x, target.y - p.y);
       if (d > 340) {
         const a = Math.atan2(target.y - p.y, target.x - p.x);
-        const cam = cameraFor(world);
+        const cam = hudCam || cameraFor(world);
         const cx = p.x - cam.x + Math.cos(a) * 52;
         const cy = p.y - cam.y + Math.sin(a) * 52;
         ctx.save();
@@ -597,25 +770,60 @@ export function createRenderer(canvas) {
 
   function drawTitle(world, opts) {
     const grad = ctx.createLinearGradient(0, 0, 0, VIEW.height);
-    grad.addColorStop(0, 'rgba(10,6,26,0.55)');
-    grad.addColorStop(0.55, 'rgba(10,6,26,0.25)');
-    grad.addColorStop(1, 'rgba(10,6,26,0.72)');
+    grad.addColorStop(0, 'rgba(24,8,44,0.62)');
+    grad.addColorStop(0.5, 'rgba(64,20,60,0.28)');
+    grad.addColorStop(1, 'rgba(10,6,26,0.74)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+    // Poster sun: a striped setting sun hanging over the bay behind the logo.
+    ctx.save();
+    const sunX = VIEW.width / 2, sunY = 252, sunR = 148;
+    const sunGrad = ctx.createLinearGradient(0, sunY - sunR, 0, sunY + sunR);
+    sunGrad.addColorStop(0, 'rgba(255,183,3,0.55)');
+    sunGrad.addColorStop(0.6, 'rgba(255,46,136,0.45)');
+    sunGrad.addColorStop(1, 'rgba(199,125,255,0.35)');
+    ctx.fillStyle = sunGrad;
+    ctx.beginPath(); ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2); ctx.fill();
+    // Retro stripes cut across the lower sun (painted in the overlay's tone,
+    // clipped to the disc so the city behind is never touched).
+    ctx.clip();
+    ctx.fillStyle = 'rgba(18,8,32,0.6)';
+    for (let i = 0; i < 5; i += 1) {
+      ctx.fillRect(sunX - sunR, sunY + 18 + i * 26, sunR * 2, 5 + i * 2);
+    }
+    ctx.restore();
+    // Poster frame.
+    ctx.strokeStyle = 'rgba(255,46,136,0.5)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(14, 14, VIEW.width - 28, VIEW.height - 28);
+    ctx.strokeStyle = 'rgba(34,211,238,0.4)';
+    ctx.strokeRect(20, 20, VIEW.width - 40, VIEW.height - 40);
     ctx.textAlign = 'center';
     ctx.save();
+    ctx.font = `96px ${TITLE_FONT}`;
     ctx.shadowColor = PALETTE.neonPink;
-    ctx.shadowBlur = 34;
+    ctx.shadowBlur = 48;
     ctx.fillStyle = PALETTE.neonPink;
-    ctx.font = `92px ${TITLE_FONT}`;
+    ctx.fillText('NEON', VIEW.width / 2, 208);
+    ctx.shadowBlur = 20;
     ctx.fillText('NEON', VIEW.width / 2, 208);
     ctx.shadowColor = PALETTE.neonCyan;
+    ctx.shadowBlur = 48;
     ctx.fillStyle = PALETTE.neonCyan;
-    ctx.fillText('BAY', VIEW.width / 2, 302);
+    ctx.fillText('BAY', VIEW.width / 2, 304);
+    ctx.shadowBlur = 20;
+    ctx.fillText('BAY', VIEW.width / 2, 304);
     ctx.restore();
+    // Neon underline sweeping pink into cyan.
+    const bar = ctx.createLinearGradient(VIEW.width / 2 - 210, 0, VIEW.width / 2 + 210, 0);
+    bar.addColorStop(0, PALETTE.neonPink);
+    bar.addColorStop(0.5, PALETTE.neonGold);
+    bar.addColorStop(1, PALETTE.neonCyan);
+    ctx.fillStyle = bar;
+    ctx.fillRect(VIEW.width / 2 - 210, 322, 420, 4);
     ctx.fillStyle = PALETTE.text;
     ctx.font = `21px ${FONT}`;
-    ctx.fillText('A top-down crime story on a neon beach — steal the coupe, run the package, take the bank.', VIEW.width / 2, 348);
+    ctx.fillText('A top-down crime story on a neon beach — steal the coupe, run the package, take the bank.', VIEW.width / 2, 356);
     panel(VIEW.width / 2 - 300, 392, 600, 176);
     ctx.fillStyle = PALETTE.text;
     ctx.font = `18px ${FONT}`;
@@ -669,15 +877,27 @@ export function createRenderer(canvas) {
   }
 
   function render(world, screen, opts = {}) {
-    const cam = cameraFor(world);
+    const cam = currentCamera(world);
     const light = lightModel(world.timeHours);
     drawWorld(world, cam, light);
     drawActors(world, cam, light);
     drawLighting(world, cam, light);
     if (screen === 'title') {
       drawTitle(world, opts);
+      // The vignette still applies over the title's living backdrop.
+      if (!vignette) {
+        vignette = ctx.createRadialGradient(
+          VIEW.width / 2, VIEW.height / 2, VIEW.height * 0.42,
+          VIEW.width / 2, VIEW.height / 2, VIEW.height * 0.95,
+        );
+        vignette.addColorStop(0, 'rgba(5,4,14,0)');
+        vignette.addColorStop(1, 'rgba(5,4,14,0.34)');
+      }
+      ctx.fillStyle = vignette;
+      ctx.fillRect(0, 0, VIEW.width, VIEW.height);
       return;
     }
+    hudCam = cam;
     drawHUD(world, opts);
     // Aim reticle.
     if (!world.player.car && opts.pointer) {
@@ -704,7 +924,18 @@ export function createRenderer(canvas) {
     }
     if (world.fate) drawFate(world);
     if (screen === 'paused') drawPause();
+    // A permanent soft vignette: cheap, and it makes every frame feel graded.
+    if (!vignette) {
+      vignette = ctx.createRadialGradient(
+        VIEW.width / 2, VIEW.height / 2, VIEW.height * 0.42,
+        VIEW.width / 2, VIEW.height / 2, VIEW.height * 0.95,
+      );
+      vignette.addColorStop(0, 'rgba(5,4,14,0)');
+      vignette.addColorStop(1, 'rgba(5,4,14,0.34)');
+    }
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
   }
 
-  return { render };
+  return { render, getCamera: () => smoothCam || { x: 0, y: 0 } };
 }

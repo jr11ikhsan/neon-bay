@@ -84,7 +84,9 @@ window.addEventListener('keydown', (event) => {
 });
 
 function controlsForPlayer() {
-  const cam = cameraFor(world);
+  // Aim through the renderer's smoothed camera so the crosshair and the
+  // player's gun always agree about where the pointer is in the world.
+  const cam = renderer.getCamera() || cameraFor(world);
   const aimAngle = Math.atan2(
     cam.y + input.pointer.y - world.player.y,
     cam.x + input.pointer.x - world.player.x,
