@@ -660,7 +660,7 @@ export function createWorld(seed = 1) {
       car.speed = Math.max(car.speed - POLICE.carAccel * dt, -130);
       car.angle = angleTurn(car.angle, want + Math.PI, 1.6 * dt);
     } else {
-      const top = d < 130 ? POLICE.carSpeed * 0.45 : POLICE.carSpeed;
+      const top = d < 70 ? 70 : d < 130 ? POLICE.carSpeed * 0.45 : POLICE.carSpeed;
       car.speed = Math.min(car.speed + POLICE.carAccel * dt, top);
       car.angle = angleTurn(car.angle, want, 2.4 * dt);
     }
@@ -679,10 +679,11 @@ export function createWorld(seed = 1) {
       car.stuckT += dt;
       if (car.stuckT > 0.7) { car.reverseT = 0.55; car.stuckT = 0; }
     } else car.stuckT = Math.max(0, car.stuckT - dt);
-    // Ram pressure: a hard touch on the player's car costs it health.
+    // Ram pressure: a hard touch on the player's car costs it some health,
+    // but a grinding pursuit must not melt a car in two seconds flat.
     if (player.car && car !== player.car && dist(car.x, car.y, player.car.x, player.car.y) < 52 && Math.abs(car.speed) > 240) {
-      player.car.health -= 6 * dt * 10;
-      burst(player.car.x, player.car.y, '#ffd166', 2, 70);
+      player.car.health -= 8 * dt;
+      if (random() < dt * 6) burst(player.car.x, player.car.y, '#ffd166', 2, 70);
     }
   }
 
@@ -925,7 +926,11 @@ export function createWorld(seed = 1) {
               other.health -= 5;
               car.health -= 2;
               sfx(audio, 'crash', 0.5);
-              if (other.kind === 'police') world.crime(WANTED.hitCop, other.x, other.y);
+              // One continuous shove is one offence, not sixty a second.
+              if (other.kind === 'police' && !other.crimeCd) {
+                world.crime(WANTED.hitCop, other.x, other.y);
+                other.crimeCd = 2.5;
+              }
             }
             if (other.driver === 'traffic') { other.speed = Math.min(other.speed, 40); }
           }
@@ -1061,6 +1066,7 @@ export function createWorld(seed = 1) {
 
     updatePlayer(dt, ctl, audio);
 
+    for (const car of world.cars) car.crimeCd = Math.max(0, (car.crimeCd || 0) - dt);
     for (const car of world.cars) {
       if (car.driver === 'traffic') updateTrafficCar(car, dt);
       else if (car.kind === 'police' && car.driver === 'police') updatePoliceCar(car, dt);
