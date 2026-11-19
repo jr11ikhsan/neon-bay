@@ -10,7 +10,7 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -39,3 +39,29 @@ writeFileSync(
 );
 
 console.log('NEON BAY handed in: dossier written to ' + join(out, 'dossier.json'));
+
+// Measured hand-in summary, read back from what was actually written to
+// the output directory (not from constants): the judge's caps are only
+// meaningful against the real bytes on disk.
+function measure(dir) {
+  let files = 0, bytes = 0;
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    const st = statSync(p);
+    if (st.isDirectory()) { const sub = measure(p); files += sub.files; bytes += sub.bytes; }
+    else { files++; bytes += st.size; }
+  }
+  return { files, bytes };
+}
+const gameStats = measure(join(out, 'game'));
+const shotsDir = join(out, 'screenshots');
+const shotNames = existsSync(shotsDir) ? readdirSync(shotsDir).filter(n => n.endsWith('.jpg')).sort() : [];
+const dossierBytes = statSync(join(out, 'dossier.json')).size;
+console.log('— hand-in summary (measured from disk) —');
+console.log('game/: ' + gameStats.files + ' files, ' + gameStats.bytes + ' bytes (caps: 993 files, 50331648 bytes)');
+for (const n of shotNames) console.log('screenshots/' + n + ': ' + statSync(join(shotsDir, n)).size + ' bytes (cap: 262144)');
+console.log('screenshots: ' + shotNames.length + ' (cap: 4)');
+console.log('dossier.json: ' + dossierBytes + ' bytes (text cap: 163840)');
+const overCap = gameStats.files > 993 || gameStats.bytes > 50331648 || shotNames.length > 4 ||
+  shotNames.some(n => statSync(join(shotsDir, n)).size > 262144) || dossierBytes > 163840;
+console.log(overCap ? 'WARNING: a hand-in cap is exceeded — do not submit this build.' : 'all hand-in caps satisfied.');
