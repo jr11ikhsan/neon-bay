@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEON BAY — a tropical crime story</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%231b1035'/><circle cx='8' cy='10' r='5' fill='%23ff2e88'/></svg>">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #14101f; }
+  #gl, #hud { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #hud { pointer-events: none; }
+  #gl { cursor: crosshair; }
+  /* Read aloud, never shown: the status line screen readers announce. */
+  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+</style>
+</head>
+<body>
+<canvas id="gl" aria-label="NEON BAY: a 3D open-world crime game. Walk and drive with WASD, aim with the mouse, E to interact."></canvas>
+<canvas id="hud" aria-hidden="true"></canvas>
+<p id="status" role="status" aria-live="polite">NEON BAY — steal the gold coupe, run the package, shut down the beach dealers, take the bank, run the night delivery, empty the vault one last time, and lose the heat.</p>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

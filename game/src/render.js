@@ -105,6 +105,16 @@ export class Renderer {
     this.buildFx();
   }
 
+  // Point the renderer at a fresh world (new game / continue): the static
+  // city is seed-identical, so only the dynamic entity meshes are dropped.
+  bindWorld(world) {
+    this.world = world;
+    for (const [, m] of this.carMeshes) this.scene.remove(m);
+    for (const [, m] of this.pedMeshes) this.scene.remove(m);
+    for (const [, m] of this.pickupMeshes) this.scene.remove(m);
+    this.carMeshes.clear(); this.pedMeshes.clear(); this.pickupMeshes.clear();
+  }
+
   setQuality(full) {
     this.qualityFull = full;
     this.dirLight.castShadow = full;
