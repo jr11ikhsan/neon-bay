@@ -891,7 +891,10 @@ export function createWorld(seed = 1) {
       const car = player.car;
       if (car.health <= 0) {
         car.speed = 0;
-        world.toast('This car is wrecked — get out and find another');
+        if (!car.wreckToasted) {
+          car.wreckToasted = true;
+          world.toast('This car is wrecked — get out and find another');
+        }
       } else {
         const fwd = -ctl.moveY; // W / ArrowUp is up on screen = accelerate
         const steer = ctl.moveX;
@@ -929,7 +932,10 @@ export function createWorld(seed = 1) {
             const a = Math.atan2(other.y - car.y, other.x - car.x);
             other.x += Math.cos(a) * push;
             other.y += Math.sin(a) * push;
-            if (Math.abs(car.speed) > 200) {
+            // Contact damage is charged per bump, not per step: two cars
+            // grinding together must not melt in a second.
+            if (Math.abs(car.speed) > 200 && !other.hitCd) {
+              other.hitCd = 0.3;
               other.health -= 5;
               car.health -= 2;
               sfx(audio, 'crash', 0.5);
@@ -1073,7 +1079,10 @@ export function createWorld(seed = 1) {
 
     updatePlayer(dt, ctl, audio);
 
-    for (const car of world.cars) car.crimeCd = Math.max(0, (car.crimeCd || 0) - dt);
+    for (const car of world.cars) {
+      car.crimeCd = Math.max(0, (car.crimeCd || 0) - dt);
+      car.hitCd = Math.max(0, (car.hitCd || 0) - dt);
+    }
     for (const car of world.cars) {
       if (car.driver === 'traffic') updateTrafficCar(car, dt);
       else if (car.kind === 'police' && car.driver === 'police') updatePoliceCar(car, dt);

@@ -7,7 +7,7 @@
 // getaway drive with the law converging, the beach shootout from Mission 3,
 // and the quiet night after the story is done.
 
-export const SHOT_STEP_SECONDS = { start: 0.6, play: 4.6, chase: 3.6, end: 1.4 };
+export const SHOT_STEP_SECONDS = { start: 0.6, play: 3.6, chase: 3.6, end: 1.4 };
 
 const NEUTRAL = { moveX: 0, moveY: 0, run: false, attack: false, interact: false, aimAngle: 0 };
 
@@ -28,10 +28,10 @@ export function setupShot(world, name) {
       // with three stars on it and the package run about to begin.
       world.restore({
         money: 250, missionIndex: 1, hasGun: true,
-        x: 3050, y: 1591, health: 100, timeHours: 18.05,
+        x: 2100, y: 1591, health: 100, timeHours: 18.05,
         stats: { stolen: 1, kills: 0, missions: 1, shotsFired: 0 },
       });
-      placePlayerInCoupe(world, 3050, 1591, 0, 330);
+      placePlayerInCoupe(world, 2100, 1591, 0, 380);
       world.heat = 255;
       world.unseenFor = 0;
       break;
@@ -59,6 +59,7 @@ export function setupShot(world, name) {
       const coupe = world.missionCar;
       coupe.x = places.garage.x; coupe.y = places.garage.y;
       coupe.angle = Math.PI / 2; coupe.speed = 0; coupe.driver = null;
+      world.banner = null; // the fresh-world Mission 1 banner must not linger here
       world.player.car = null;
       world.player.x = places.garage.x - 70;
       world.player.y = places.garage.y + 26;
