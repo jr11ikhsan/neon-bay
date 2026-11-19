@@ -58,6 +58,9 @@ export function createWorld(seed = 1) {
     banner: null,
     particles: [],
     tracers: [],
+    skids: [], // tyre marks that linger on the ground (visual-pass layer)
+    shake: 0, // screen-shake magnitude, decayed in update, read by render.js
+    muzzle: null, // {x, y, angle, ttl, maxT} — the latest muzzle flash
     pickups: [],
     cars: [],
     peds: [],
@@ -267,6 +270,7 @@ export function createWorld(seed = 1) {
 
   world.hurtPlayer = (dmg, audio) => {
     if (world.fate) return;
+    world.shake = Math.min(8, world.shake + 2.2);
     if (player.car) {
       player.car.health -= dmg * 0.55;
       player.health -= dmg * 0.3;
@@ -498,6 +502,7 @@ export function createWorld(seed = 1) {
       const a = player.angle + R.range(-GUN.spread, GUN.spread);
       const x0 = player.x + Math.cos(player.angle) * 18;
       const y0 = player.y + Math.sin(player.angle) * 18;
+      world.muzzle = { x: x0, y: y0, angle: a, ttl: 0.055, maxT: 0.055 };
       let hx = x0 + Math.cos(a) * GUN.range;
       let hy = y0 + Math.sin(a) * GUN.range;
       let bestT = 1;
@@ -681,6 +686,7 @@ export function createWorld(seed = 1) {
       car.stuckT += dt;
       if (car.stuckT > 0.7) { car.reverseT = 0.55; car.stuckT = 0; }
     } else car.stuckT = Math.max(0, car.stuckT - dt);
+    addTyreEffects(car, dt, Math.abs(car.speed) > 330 ? 'hard' : null);
     // Ram pressure: a hard touch on the player's car costs it some health,
     // but a grinding pursuit must not melt a car in two seconds flat.
     if (player.car && car !== player.car && dist(car.x, car.y, player.car.x, player.car.y) < 52 && Math.abs(car.speed) > 240) {
@@ -872,6 +878,40 @@ export function createWorld(seed = 1) {
   }
 
 
+  // ---------- tyre effects: skid marks and dust (visual-pass layer) ----------
+
+  function addTyreEffects(car, dt, workingHard) {
+    car.skidCd = Math.max(0, (car.skidCd || 0) - dt);
+    const speed = Math.abs(car.speed);
+    const fx = Math.cos(car.angle), fy = Math.sin(car.angle);
+    const laying = (workingHard === 'hard' && speed > 215) || (workingHard === 'burnout' && speed > 35);
+    if (laying && car.skidCd <= 0) {
+      car.skidCd = 0.016;
+      const back = -CAR.length * 0.32;
+      const rx = -fy, ry = fx;
+      for (const side of [-1, 1]) {
+        world.skids.push({
+          x: car.x + fx * back + rx * 16 * side,
+          y: car.y + fy * back + ry * 16 * side,
+          angle: car.angle, ttl: 13, maxT: 13,
+          sand: car.x > WORLD.beachX,
+        });
+      }
+      if (world.skids.length > 520) world.skids.splice(0, world.skids.length - 520);
+    }
+    // Dust kicked up on the sand, and a little off the asphalt at speed.
+    if (speed > 130 && random() < dt * (car.x > WORLD.beachX ? 26 : 5)) {
+      world.particles.push({
+        x: car.x - fx * 40 + R.range(-9, 9),
+        y: car.y - fy * 40 + R.range(-9, 9),
+        vx: R.range(-16, 16), vy: R.range(-16, 16),
+        ttl: 0.7 + random() * 0.5, maxT: 1.1,
+        color: car.x > WORLD.beachX ? 'rgba(216,190,140,0.5)' : 'rgba(150,150,160,0.35)',
+        size: 5 + random() * 7,
+      });
+    }
+  }
+
   // ---------- player ----------
 
   function updatePlayer(dt, ctl, audio) {
@@ -909,12 +949,16 @@ export function createWorld(seed = 1) {
         const ox = car.x, oy = car.y;
         car.x += Math.cos(car.angle) * car.speed * dt;
         car.y += Math.sin(car.angle) * car.speed * dt;
+        const tyreMode = (fwd > 0 && car.speed >= 0 && car.speed < 110) ? 'burnout'
+          : (Math.abs(steer) > 0.35 || (fwd < 0 && car.speed > 200)) ? 'hard' : null;
+        addTyreEffects(car, dt, tyreMode);
         const p = { x: car.x, y: car.y };
         collideWorld(city, p, 32);
         if (Math.abs(p.x - car.x) > 0.5 || Math.abs(p.y - car.y) > 0.5) {
           const impact = Math.abs(car.speed);
           car.x = p.x; car.y = p.y;
           if (impact > 230) {
+            world.shake = Math.min(11, world.shake + (impact - 230) * 0.02);
             car.health -= (impact - 200) * 0.05;
             player.health -= (impact - 200) * 0.012;
             sfx(audio, 'crash', clamp(impact / 500, 0.3, 1));
@@ -1155,6 +1199,16 @@ export function createWorld(seed = 1) {
     for (let i = world.tracers.length - 1; i >= 0; i -= 1) {
       world.tracers[i].ttl -= dt;
       if (world.tracers[i].ttl <= 0) world.tracers.splice(i, 1);
+    }
+    // Visual-pass bookkeeping: shake settles, skid marks fade, flash dies.
+    world.shake = Math.max(0, world.shake - dt * 30);
+    if (world.muzzle) {
+      world.muzzle.ttl -= dt;
+      if (world.muzzle.ttl <= 0) world.muzzle = null;
+    }
+    for (let i = world.skids.length - 1; i >= 0; i -= 1) {
+      world.skids[i].ttl -= dt;
+      if (world.skids[i].ttl <= 0) world.skids.splice(i, 1);
     }
     // Corpses fade so the streets do not fill up forever.
     world.peds = world.peds.filter((p) => !p.dead || p.deadT < 26);
