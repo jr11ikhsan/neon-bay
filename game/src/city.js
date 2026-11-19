@@ -36,16 +36,17 @@ export function createCity(rng) {
   const xGaps = gaps(ROADS.avenues, half, ROADS.boardwalkX - 60);
   const yGaps = gaps(ROADS.streets, half, WORLD.height - 40);
 
-  // The eight places, each anchored in its own block with a door that
-  // stands on open road or promenade, so a player can always reach it.
+  // The eight places, each anchored in its own block. The door stands on
+  // the building's own doorstep — off the carriageway, clear of the
+  // traffic lanes — so standing at a door is never a death sentence.
   const places = {
-    carLot: { id: 'carLot', name: 'Bay Motors', letter: 'C', door: { x: 3845, y: 720 }, color: '#e0a83c' },
-    garage: { id: 'garage', name: 'Taller Sol', letter: 'G', door: { x: 700, y: 2790 }, color: '#3ec1a8' },
-    hotel: { id: 'hotel', name: 'Hotel Lumina', letter: 'H', door: { x: 3125, y: 1300 }, color: '#ff3d8a' },
-    bank: { id: 'bank', name: 'Banco del Sol', letter: '$', door: { x: 2100, y: 1590 }, color: '#ffc44d' },
-    clinic: { id: 'clinic', name: 'Clinica Brisa', letter: '+', door: { x: 1120, y: 1900 }, color: '#e8e4da' },
-    policeStation: { id: 'policeStation', name: 'Comisaria', letter: 'P', door: { x: 2100, y: 455 }, color: '#4f7ad9' },
-    market: { id: 'market', name: 'Mercado Sol', letter: 'M', door: { x: 1025, y: 1300 }, color: '#7fb069' },
+    carLot: { id: 'carLot', name: 'Bay Motors', letter: 'C', door: { x: 3760, y: 720 }, color: '#e0a83c' },
+    garage: { id: 'garage', name: 'Taller Sol', letter: 'G', door: { x: 700, y: 2710 }, color: '#3ec1a8' },
+    hotel: { id: 'hotel', name: 'Hotel Lumina', letter: 'H', door: { x: 3030, y: 1300 }, color: '#ff3d8a' },
+    bank: { id: 'bank', name: 'Banco del Sol', letter: '$', door: { x: 2100, y: 1490 }, color: '#ffc44d' },
+    clinic: { id: 'clinic', name: 'Clinica Brisa', letter: '+', door: { x: 1200, y: 1900 }, color: '#e8e4da' },
+    policeStation: { id: 'policeStation', name: 'Comisaria', letter: 'P', door: { x: 2100, y: 530 }, color: '#4f7ad9' },
+    market: { id: 'market', name: 'Mercado Sol', letter: 'M', door: { x: 910, y: 1300 }, color: '#7fb069' },
     hideout: { id: 'hideout', name: 'Casa Segura', letter: 'S', door: { x: 700, y: 3110 }, color: '#8a5fd6' },
   };
   // Building footprints for the places that have one (the car lot is open).

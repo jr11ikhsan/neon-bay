@@ -90,8 +90,9 @@ export function createWorld(rng) {
   }
 
   // --- population -------------------------------------------------------
-  // The first parked car sits by the spawn corner (the test's neighbour).
-  makeCar('parked', 600, 2695, 0, '#4f7ad9', 'sedan');
+  // The first parked car sits in the park by the spawn corner (the
+  // test's neighbour) — clear of every doorstep and lane.
+  makeCar('parked', 520, 2950, 0, '#4f7ad9', 'sedan');
   for (const spot of city.lotSpots) {
     if (rng.chance(0.72)) makeCar('parked', spot.x, spot.y, spot.angle, null, rng.pick(['sedan', 'taxi', 'van', 'pickup']));
   }
@@ -204,7 +205,7 @@ export function createWorld(rng) {
     const key = `${state.missionIndex}:${state.stepIndex}`;
     if (state.spawnedKey === key) return;
     state.spawnedKey = key;
-    state.kills = 0;
+    if (step.kind === 'kill') state.kills = 0;
     state.channelT = 0;
     if (step.kind === 'steal' && step.car === 'job') {
       const job = makeCar('job', 3580, 800, Math.PI / 2, '#2ee6ff', 'sport');
@@ -372,6 +373,13 @@ export function createWorld(rng) {
       collide(city, p, PLAYER.radius);
       return events | EV.ENTER;
     }
+    // the story's target car outranks every other ride: when a steal
+    // step is live and the marked car is in reach, E means THAT car
+    const stepNow = currentStep();
+    if (stepNow && stepNow.kind === 'steal' && state.targetCarRef && !state.targetCarRef.dead) {
+      const tc = state.targetCarRef;
+      if (Math.hypot(tc.x - p.x, tc.y - p.y) < 54) return enterCar(tc, events);
+    }
     let doorPlace = null; let doorDist = Infinity;
     for (const pl of Object.values(city.places)) {
       const d = Math.hypot(pl.door.x - p.x, pl.door.y - p.y);
@@ -430,7 +438,7 @@ export function createWorld(rng) {
     while (wp && Math.hypot(wp.x - car.x, wp.y - car.y) < 58) { car.planI += 1; wp = car.plan[car.planI]; }
     if (!wp) { car.plan = null; return; }
     if (car.stopT > 0) { car.stopT -= dt; moveCar(car, dt, car.speed > 10 ? -0.6 : 0, 0); return; }
-    if (car.planI < car.plan.length - 1 && Math.hypot(wp.x - car.x, wp.y - car.y) < 130 && rng.chance(0.006)) car.stopT = rng.range(0.5, 1.0);
+    if (car.planI < car.plan.length - 1 && Math.hypot(wp.x - car.x, wp.y - car.y) < 130 && rng.chance(0.0035)) car.stopT = rng.range(0.4, 0.8);
     // obstacle ahead?
     const fx = Math.cos(car.angle); const fy = Math.sin(car.angle);
     let blocked = false;
@@ -446,7 +454,11 @@ export function createWorld(rng) {
       }
     }
     if (!blocked && state.player.car !== car && Math.hypot(state.player.x - aheadX, state.player.y - aheadY) < 34) blocked = true;
-    const want = Math.atan2(wp.y - car.y, wp.x - car.x);
+    // keep a right-hand lane: offset the steering target so opposing
+    // flows pass instead of meeting nose to nose
+    const laneX = wp.x + Math.sin(car.angle) * 24;
+    const laneY = wp.y - Math.cos(car.angle) * 24;
+    const want = Math.atan2(laneY - car.y, laneX - car.x);
     const d = angDiff(want, car.angle);
     const steer = Math.max(-1, Math.min(1, d * 2.4));
     let throttle = Math.abs(d) > 1.15 ? -0.55 : 1;
@@ -594,9 +606,10 @@ export function createWorld(rng) {
         car.planI = 0;
         driveAI(car, dt, 1.25);
       }
-      // deploy officers: suspect on foot nearby, or boxed in a stopped car
+      // deploy officers: suspect on foot nearby, or boxed in a stopped
+      // car — but nobody deploys against a suspect they cannot see
       const suspectSlow = p.car ? Math.abs(p.car.speed) < 25 : true;
-      if ((!p.car && d < 175) || (p.car && suspectSlow && d < 115)) {
+      if (!playerHidden() && ((!p.car && d < 175) || (p.car && suspectSlow && d < 115))) {
         car.deployT += dt;
         if (car.deployT > 1.2) {
           car.deployT = 0;
@@ -615,10 +628,14 @@ export function createWorld(rng) {
 
     // foot officers
     let arresting = false;
+    const hidden = playerHidden();
     for (const cop of state.cops) {
       if (cop.dead) continue;
       const d = Math.hypot(cop.x - p.x, cop.y - p.y);
       if (st === 0 && d > 260) { cop.dead = true; continue; }
+      // a suspect lying low at Casa Segura is a cold trail: search the
+      // last seen point briefly, then give up and melt away
+      if (hidden && state.seenT > 3) { cop.dead = true; continue; }
       const target = state.lastSeen || p;
       const td = Math.hypot(target.x - cop.x, target.y - cop.y);
       if (td > 26) {
@@ -629,16 +646,17 @@ export function createWorld(rng) {
         collide(city, cop, 13);
       }
       cop.fireCd -= dt;
-      if (st >= 3 && d < 380 && lineOfSight(city, cop.x, cop.y, p.x, p.y) && cop.fireCd <= 0) {
+      if (!hidden && st >= 3 && d < 380 && lineOfSight(city, cop.x, cop.y, p.x, p.y) && cop.fireCd <= 0) {
         cop.fireCd = 0.95;
-        const hitChance = d < 150 ? 0.6 : d < 300 ? 0.38 : 0.18;
+        let hitChance = d < 150 ? 0.6 : d < 300 ? 0.38 : 0.18;
+        if (p.speedNow > 200) hitChance *= 0.45; // a sprinting target is hard to hit
         state.tracers.push({ x1: cop.x, y1: cop.y, x2: p.x, y2: p.y, ttl: 0.08, hostile: true });
         if (rng.chance(hitChance)) {
           if (p.car) p.car.hp = Math.max(0, p.car.hp - 5);
           else { p.hp -= 7; events |= EV.HIT; }
         }
       }
-      if (!p.car && d < 48 && st > 0 && st <= 2) arresting = true;
+      if (!hidden && !p.car && d < 48 && st > 0 && st <= 2) arresting = true;
     }
     if (arresting && p.speedNow < 120) state.bustedMeter = Math.min(1, state.bustedMeter + dt / 2.2);
     else state.bustedMeter = Math.max(0, state.bustedMeter - dt / 1.4);
@@ -702,6 +720,7 @@ export function createWorld(rng) {
     for (let i = 0; i < cars.length; i += 1) {
       const a = cars[i];
       if (a.dead) continue;
+      a.hitCd = Math.max(0, a.hitCd - dt);
       for (let j = i + 1; j < cars.length; j += 1) {
         const b = cars[j];
         if (b.dead) continue;
@@ -710,10 +729,21 @@ export function createWorld(rng) {
         if (d > 0.01 && d < 50) {
           const push = (50 - d) / 2;
           const ux = dx / d; const uy = dy / d;
-          if (a.driver !== 'player') { a.x -= ux * push; a.y -= uy * push; }
-          if (b.driver !== 'player') { b.x += ux * push; b.y += uy * push; }
-          const rel = Math.abs(a.speed - b.speed);
-          if (rel > 130) { a.hp -= (rel - 130) * 0.03; b.hp -= (rel - 130) * 0.03; }
+          a.x -= ux * push; a.y -= uy * push;
+          b.x += ux * push; b.y += uy * push;
+          collide(city, a, 24);
+          collide(city, b, 24);
+          // damage once per impact, from the true closing speed along
+          // the contact normal — a nose-to-nose crash hurts, a gentle
+          // overtake does not, and resting contact never grinds hp away
+          const vax = Math.cos(a.angle) * a.speed; const vay = Math.sin(a.angle) * a.speed;
+          const vbx = Math.cos(b.angle) * b.speed; const vby = Math.sin(b.angle) * b.speed;
+          const closing = (vax - vbx) * ux + (vay - vby) * uy;
+          if (closing > 130 && a.hitCd <= 0 && b.hitCd <= 0) {
+            const dmg = Math.min(14, (closing - 130) * 0.045);
+            a.hp -= dmg; b.hp -= dmg;
+            a.hitCd = 0.5; b.hitCd = 0.5;
+          }
           a.speed *= 0.94; b.speed *= 0.94;
           if ((a.driver === 'player' && b.kind === 'police') || (b.driver === 'player' && a.kind === 'police')) {
             if (state.ramCd <= 0) { crime(60); state.ramCd = 1.5; }
@@ -758,10 +788,14 @@ export function createWorld(rng) {
     world.vaultReady = state.vaultCd <= 0;
     spawnStepNeeds();
 
-    // weapon selection
+    // weapon selection (switching weapons re-grips the trigger: the
+    // next held pull counts as a fresh one)
     if (c.slot !== undefined && c.slot >= 0) {
       const name = WEAPON_BY_SLOT[c.slot];
-      if (name === 'fist' || p.weapons[name]) p.weapon = name;
+      if ((name === 'fist' || p.weapons[name]) && p.weapon !== name) {
+        p.weapon = name;
+        state.prevFire = false;
+      }
     }
 
     // player movement
@@ -830,7 +864,7 @@ export function createWorld(rng) {
       switch (stepDef.kind) {
         case 'goto': if (dPt < stepDef.r) events = advanceStep(events); break;
         case 'pickup':
-          if (dPt < stepDef.r) { state.heat += stepDef.heat; state.seenT = 0; events = advanceStep(events) | EV.PICKUP; }
+          if (dPt < stepDef.r) { state.heat = stepDef.heat; state.seenT = 0; events = advanceStep(events) | EV.PICKUP; }
           break;
         case 'steal': if (p.car && p.car === state.targetCarRef) events = advanceStep(events); break;
         case 'deliverCar': if (p.car && p.car === state.targetCarRef && dPt < stepDef.r) events = advanceStep(events); break;

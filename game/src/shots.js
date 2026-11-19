@@ -75,8 +75,8 @@ export function stageShot(name, world) {
     p.money = 6200;
     p.weapons.pistol = true; p.weapons.smg = true; p.weapons.shotgun = true;
     const coupe = state.cars.find((c) => c.id === 'coupe');
-    coupe.x = 775; coupe.y = 2735; coupe.angle = 0.35; coupe.speed = 0;
-    p.x = 712; p.y = 2782;
+    coupe.x = 770; coupe.y = 2720; coupe.angle = 0.35; coupe.speed = 0;
+    p.x = 715; p.y = 2745;
     p.angle = Math.atan2(coupe.y - p.y, coupe.x - p.x);
     stepN(world, 90, IDLE);
     return 'play';
