@@ -73,7 +73,7 @@ export function setupShot(world, name) {
       // boardwalk above the beach road.
       world.player.x = 3860;
       world.player.y = 1500;
-      world.player.angle = Math.PI / 3;
+      world.player.angle = Math.PI; // face west: the 3D title camera looks into the city
       world.timeHours = 17.58;
       break;
     }

@@ -9,11 +9,11 @@ import { STEP, SAVE_KEY, BEST_KEY } from './config.js';
 import { createInput, ACTION_CONFIRM, ACTION_PAUSE, ACTION_INTERACT } from './input.js';
 import { createAudio } from './audio.js';
 import { createWorld } from './world.js';
-import { createRenderer, cameraFor } from './render.js';
+import { createRenderer } from './render.js';
 import { setupShot, shotControls, SHOT_STEP_SECONDS } from './shots.js';
 
 const canvas = document.getElementById('game');
-const renderer = createRenderer(canvas);
+const renderer = createRenderer(document.getElementById('gl'), canvas);
 const input = createInput(canvas);
 const audio = createAudio();
 
@@ -83,14 +83,15 @@ window.addEventListener('keydown', (event) => {
   }
 });
 
+let lastAim = -Math.PI / 2;
 function controlsForPlayer() {
-  // Aim through the renderer's smoothed camera so the crosshair and the
-  // player's gun always agree about where the pointer is in the world.
-  const cam = renderer.getCamera() || cameraFor(world);
-  const aimAngle = Math.atan2(
-    cam.y + input.pointer.y - world.player.y,
-    cam.x + input.pointer.x - world.player.x,
-  );
+  // Aim by casting the pointer through the 3D camera onto the ground plane:
+  // where the crosshair rests on the street is where the player aims.
+  const ground = renderer.screenToGround(input.pointer.x, input.pointer.y);
+  if (ground) {
+    lastAim = Math.atan2(ground.y - world.player.y, ground.x - world.player.x);
+  }
+  const aimAngle = lastAim;
   return {
     moveX: input.moveX(),
     moveY: input.moveY(),
@@ -130,6 +131,7 @@ function stepOnce(actions) {
 // Screenshot staging: build the scene, settle it with scripted controls,
 // render twice (the second frame carries the settled lighting), then signal.
 if (shotName) {
+  renderer.setQuality(true); // stills get the full pass, however slow the GPU
   setupShot(world, shotName);
   screen = shotName === 'start' ? 'title' : 'playing';
   const seconds = SHOT_STEP_SECONDS[shotName] || 1;
