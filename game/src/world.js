@@ -70,7 +70,9 @@ export function createWorld(seed = 1) {
   };
 
   const player = {
-    x: 636, y: 2952, angle: -Math.PI / 2,
+    // Spawn on the avenue itself (x=320 is a road centre): a sidewalk spawn
+    // risks landing inside a generated building, which then ejects the player.
+    x: 352, y: 2860, angle: -Math.PI / 2,
     health: PLAYER.health, car: null, hasGun: false,
     punchCd: 0, shootCd: 0, hurtT: 0, dead: false,
   };
@@ -776,8 +778,13 @@ export function createWorld(seed = 1) {
       world.cars.splice(world.cars.indexOf(fresh), 1);
       Object.assign(car, fresh, { x: car.x, y: car.y });
       if (car.axis === 'v') { car.x = laneFor('v', car.road, car.dir).x; car.y = car.dir > 0 ? -60 : WORLD.height + 60; }
-      else { car.y = laneFor('h', car.road, car.dir).y; car.x = car.dir > 0 ? -60 : WORLD.beachX + 40; }
+      else { car.y = laneFor('h', car.road, car.dir).y; car.x = car.dir > 0 ? -60 : WORLD.beachX - 40; }
       car.angle = car.axis === 'v' ? (car.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (car.dir > 0 ? 0 : Math.PI);
+    }
+    // The avenues end at the boardwalk: eastbound traffic turns around there
+    // instead of cruising down the sand (and through whoever is on it).
+    if (car.axis === 'h' && car.dir > 0 && car.x > WORLD.beachX - 60) {
+      car.dir = -1; car.angle = Math.PI; car.y = car.road - ROADS.laneOffset;
     }
     if (car.x > WORLD.waterX - 50 && car.axis === 'h') { car.dir = -1; car.angle = Math.PI; car.y = car.road - ROADS.laneOffset; }
   }
