@@ -76,10 +76,10 @@ function groundTexture(city) {
   const SX = 2048 / WORLD.width;
   const SY = 1536 / WORLD.height;
   return canvasTexture(2048, 1536, (g) => {
-    g.fillStyle = '#33304a'; // block ground: violet concrete
+    g.fillStyle = '#5d5790'; // block ground: violet concrete
     g.fillRect(0, 0, 2048, 1536);
     // park band south
-    g.fillStyle = '#2c4a34';
+    g.fillStyle = '#40704c';
     g.fillRect(0, 2890 * SY, 4180 * SX, (3600 - 2890) * SY);
     // sand + boardwalk
     g.fillStyle = PALETTE.sand;
@@ -168,6 +168,7 @@ export function createRenderer(glCanvas, hudCanvas) {
   const lightbars = [];
   const trafficDots = [];
   let qualityFull = true;
+  let darknessNow = 0;
 
   function buildCity(city) {
     cityGroup = new THREE.Group();
@@ -276,7 +277,7 @@ export function createRenderer(glCanvas, hudCanvas) {
       head.position.set(lamp.x, 30, lamp.y);
       cityGroup.add(head);
       const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffca7a, transparent: true, opacity: 0, depthWrite: false }));
-      glow.scale.setScalar(64);
+      glow.scale.setScalar(92);
       glow.position.set(lamp.x, 30, lamp.y);
       cityGroup.add(glow);
       lampGlows.push(glow);
@@ -433,12 +434,13 @@ export function createRenderer(glCanvas, hudCanvas) {
   }
   const SKY_DAY = new THREE.Color(0x79b8e0);
   const SKY_DUSK = new THREE.Color(0x51386e);
-  const SKY_NIGHT = new THREE.Color(0x131c38);
+  const SKY_NIGHT = new THREE.Color(0x35477a);
   const FOG_DAY = new THREE.Color(0x9fc4de);
-  const FOG_NIGHT = new THREE.Color(0x1a2440);
+  const FOG_NIGHT = new THREE.Color(0x36466a);
 
   const camPos = new THREE.Vector3(430, 260, 3400);
   let camYaw = -Math.PI / 2;
+  let snapCam = false;
 
   function syncWorld(state, dt) {
     // cars
@@ -453,7 +455,7 @@ export function createRenderer(glCanvas, hudCanvas) {
       const dmg = 1 - car.hp / 100;
       grp.position.y = dmg > 0.6 ? -2 : 0;
       for (const wheel of grp.userData.wheels) wheel.rotation.z -= (car.speed * dt) / 6.5;
-      const dark = renderer.userData.darkness || 0;
+      const dark = darknessNow;
       for (const glow of grp.userData.lights) glow.material.opacity = dark * 0.75;
     }
     for (const [id, grp] of carGroups) {
@@ -533,15 +535,16 @@ export function createRenderer(glCanvas, hudCanvas) {
 
   function applyLight(state) {
     const dark = darknessAt(state.minutes);
-    renderer.userData.darkness = dark;
+    darknessNow = dark;
+    renderer.toneMappingExposure = 1 + dark * 0.45;
     const sky = new THREE.Color();
     if (dark < 0.55) sky.copy(SKY_DAY).lerp(SKY_DUSK, dark / 0.55);
     else sky.copy(SKY_DUSK).lerp(SKY_NIGHT, (dark - 0.55) / 0.45);
     scene.background = sky;
     scene.fog = new THREE.Fog(FOG_DAY.clone().lerp(FOG_NIGHT, dark), 1500, 4600);
-    hemi.intensity = 0.85 + dark * 0.25;
+    hemi.intensity = 0.9 + dark * 0.85;
     hemi.color.setHex(dark > 0.6 ? 0x8fb0ff : 0xbdd8ff);
-    amb.intensity = 0.32 + dark * 0.22;
+    amb.intensity = 0.34 + dark * 0.42;
     const dayFrac = ((state.minutes - 360) % 1440) / 1440; // 06:00 -> 0
     const sunAngle = dayFrac * Math.PI;
     const focus = state.player;
@@ -551,11 +554,11 @@ export function createRenderer(glCanvas, hudCanvas) {
       sun.position.set(focus.x + Math.cos(sunAngle) * 900, 500 + Math.sin(sunAngle) * 700, focus.y - 500);
     } else {
       sun.color.setHex(0x9db8ff);
-      sun.intensity = 0.55;
+      sun.intensity = 1.0;
       sun.position.set(focus.x - 500, 950, focus.y - 300);
     }
     sun.target.position.set(focus.x, 0, focus.y);
-    for (const glow of lampGlows) glow.material.opacity = Math.max(0, dark - 0.25) * 0.85;
+    for (const glow of lampGlows) glow.material.opacity = Math.min(0.95, dark * 1.05);
     if (stars) {
       stars.material.opacity = Math.max(0, dark - 0.45) * 1.4;
       stars.position.set(focus.x, 0, focus.y);
@@ -570,7 +573,7 @@ export function createRenderer(glCanvas, hudCanvas) {
     }
     if (cityGroup) {
       cityGroup.traverse((obj) => {
-        if (obj.material && obj.material.name === 'facade') obj.material.emissiveIntensity = dark * 0.6;
+        if (obj.material && obj.material.name === 'facade') obj.material.emissiveIntensity = dark * 1.5;
       });
     }
   }
@@ -581,21 +584,26 @@ export function createRenderer(glCanvas, hudCanvas) {
       const cx = 3160; const cz = 1620;
       const a = state.t * 0.05;
       camPos.set(cx + Math.cos(a) * 560, 230, cz + Math.sin(a) * 560);
-      camera.position.lerp(camPos, 1 - Math.exp(-dt * 2));
+      if (snapCam) camera.position.copy(camPos);
+      else camera.position.lerp(camPos, 1 - Math.exp(-dt * 2));
       camera.lookAt(cx, 30, cz);
       camera.fov = 55;
       camera.updateProjectionMatrix();
+      snapCam = false;
       return;
     }
     const focusAngle = p.car ? p.car.angle : p.angle;
     const speed = p.car ? Math.abs(p.car.speed) : 0;
     const back = p.car ? 185 + speed * 0.22 : 128;
     const height = p.car ? 92 : 74;
-    camYaw += (((focusAngle - camYaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * Math.min(1, dt * 3.2);
+    if (snapCam) camYaw = focusAngle;
+    else camYaw += (((focusAngle - camYaw + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * Math.min(1, dt * 3.2);
     const tx = p.x - Math.cos(camYaw) * back;
     const ty = p.y - Math.sin(camYaw) * back;
     camPos.set(tx, height, ty);
-    camera.position.lerp(camPos, 1 - Math.exp(-dt * (p.car ? 5 : 7)));
+    if (snapCam) camera.position.copy(camPos);
+    else camera.position.lerp(camPos, 1 - Math.exp(-dt * (p.car ? 5 : 7)));
+    snapCam = false;
     camera.lookAt(p.x + Math.cos(camYaw) * 90, 16, p.y + Math.sin(camYaw) * 90);
     const targetFov = 58 + (p.car ? Math.min(12, speed * 0.028) : 0);
     camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 3);
@@ -903,5 +911,5 @@ export function createRenderer(glCanvas, hudCanvas) {
     else setQuality(true);
   } catch { setQuality(true); }
 
-  return { draw, pickGround, resize, setQuality, get qualityFull() { return qualityFull; } };
+  return { draw, pickGround, resize, setQuality, snapCamera: () => { snapCam = true; }, get qualityFull() { return qualityFull; } };
 }

@@ -29,7 +29,7 @@ export function stageShot(name, world) {
     p.money = 250;
     p.weapons.pistol = true;
     p.weapon = 'pistol';
-    const coupe = state.cars.find((c) => c.id === 'coupe');
+    const coupe = state.cars.find((c) => c.kind === 'mission');
     coupe.x = 2460; coupe.y = 700; coupe.angle = Math.PI / 2; coupe.speed = 200;
     p.car = coupe;
     coupe.driver = 'player';
@@ -74,11 +74,15 @@ export function stageShot(name, world) {
     state.storyComplete = true;
     p.money = 6200;
     p.weapons.pistol = true; p.weapons.smg = true; p.weapons.shotgun = true;
-    const coupe = state.cars.find((c) => c.id === 'coupe');
-    coupe.x = 770; coupe.y = 2720; coupe.angle = 0.35; coupe.speed = 0;
-    p.x = 715; p.y = 2745;
+    const coupe = state.cars.find((c) => c.kind === 'mission');
+    coupe.x = 640; coupe.y = 2740; coupe.angle = 0.1; coupe.speed = 0;
+    // the legend on the Taller Sol kerb with his gold coupe, facing
+    // east — the garage sign behind him, the lit avenue ahead
+    p.x = 560; p.y = 2735;
+    p.hp = 10000; // staging armour against passing traffic
     p.angle = Math.atan2(coupe.y - p.y, coupe.x - p.x);
     stepN(world, 90, IDLE);
+    p.hp = 100;
     return 'play';
   }
   // start: the title at golden dusk, the city alive behind the poster

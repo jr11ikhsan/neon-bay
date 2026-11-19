@@ -49,11 +49,12 @@ let best = readBest();
 function runShot(name) {
   renderer.setQuality(true);
   const screen = stageShot(name, world);
+  renderer.snapCamera(); // stills: no fly-in, the camera starts on subject
   let painted = 0;
   function paint() {
     renderer.draw(world, screen, best, 0.016);
     painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
+    if (painted < 3) requestAnimationFrame(paint);
     else window.__shotReady = true;
   }
   requestAnimationFrame(paint);

@@ -64,5 +64,5 @@ export const PALETTE = {
   violet: '#7b4dff',
   sand: '#e8c98f',
   sea: '#14586e',
-  asphalt: '#23232e',
+  asphalt: '#565e78',
 };
