@@ -296,7 +296,7 @@ export class Renderer {
     this.pGeo.setDrawRange(0, pi); this.pGeo.attributes.position.needsUpdate = true; this.pGeo.attributes.color.needsUpdate = true;
     // Objective pillar.
     const obj = world.objective();
-    if (obj && world.step) { this.pillar.visible = true; this.pillar.position.x = obj.x; this.pillar.position.z = obj.y; this.objLight.intensity = 900 * this.dark + 200; this.objLight.position.x = obj.x; this.objLight.position.z = obj.y; }
+    if (obj && world.currentStep) { this.pillar.visible = true; this.pillar.position.x = obj.x; this.pillar.position.z = obj.y; this.objLight.intensity = 900 * this.dark + 200; this.objLight.position.x = obj.x; this.objLight.position.z = obj.y; }
     else { this.pillar.visible = false; this.objLight.intensity = 0; }
   }
   groundPoint(mx, my) {
@@ -392,7 +392,7 @@ export class Renderer {
     g.globalAlpha = 0.92; g.drawImage(this.minimapBase, x0, y0); g.globalAlpha = 1;
     const px = world.player.x * this.mmSx, py = world.player.y * this.mmSy;
     const obj = world.objective();
-    if (obj && world.step) { g.strokeStyle = '#ffd23e'; g.lineWidth = 2; g.beginPath(); g.arc(x0 + obj.x * this.mmSx, y0 + obj.y * this.mmSy, 6 + Math.sin(world.elapsed * 5) * 1.6, 0, 7); g.stroke(); }
+    if (obj && world.currentStep) { g.strokeStyle = '#ffd23e'; g.lineWidth = 2; g.beginPath(); g.arc(x0 + obj.x * this.mmSx, y0 + obj.y * this.mmSy, 6 + Math.sin(world.elapsed * 5) * 1.6, 0, 7); g.stroke(); }
     if (world.stars > 0) { g.fillStyle = '#4d7dff'; for (const c of world.cars) if (c.kind === 'police') { g.beginPath(); g.arc(x0 + c.x * this.mmSx, y0 + c.y * this.mmSy, 3, 0, 7); g.fill(); } }
     g.save(); g.translate(x0 + px, y0 + py); g.rotate(world.player.a);
     g.fillStyle = '#ffffff'; g.beginPath(); g.moveTo(8, 0); g.lineTo(-6, -5); g.lineTo(-6, 5); g.closePath(); g.fill(); g.restore();
@@ -427,7 +427,7 @@ export class Renderer {
     // Objective banner.
     const obj = world.objective();
     if (obj) {
-      const label = obj.label + (world.step && obj.dist > 0 ? '  ·  ' + Math.round(obj.dist / 10) * 10 + 'm' : '');
+      const label = obj.label + (world.currentStep && obj.dist > 0 ? '  ·  ' + Math.round(obj.dist / 10) * 10 + 'm' : '');
       g.font = 'bold 17px Arial'; const tw = g.measureText(label).width + 44;
       this.panel(W / 2 - tw / 2, 16, tw, 40, '#ffd23e');
       g.fillStyle = '#ffe9a0'; g.textAlign = 'center'; g.fillText(label, W / 2, 43);

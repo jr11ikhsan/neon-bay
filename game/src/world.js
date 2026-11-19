@@ -40,7 +40,7 @@ export class World {
   }
   get stars() { let s = 0; for (const t of WANTED.thresholds) if (this.heat >= t) s++; return s; }
   get mission() { return this.storyComplete ? null : this.missions[this.missionIdx]; }
-  get step() { const m = this.mission; return m ? m.steps[this.stepIdx] : null; }
+  get currentStep() { const m = this.mission; return m ? m.steps[this.stepIdx] : null; }
   toast(text) { this.toasts.push({ text, t: 4.2 }); if (this.toasts.length > 3) this.toasts.shift(); }
   emit(k, extra) { this.events.push(Object.assign({ k }, extra)); }
 
@@ -142,6 +142,7 @@ export class World {
     this.bankCd = Math.max(0, this.bankCd - dt);
     this.shotHeatCd = Math.max(0, this.shotHeatCd - dt);
     this.contactCd = Math.max(0, this.contactCd - dt);
+    for (const c of this.cars) if (c.crashCd) c.crashCd = Math.max(0, c.crashCd - dt);
     this.player.fireCd = Math.max(0, this.player.fireCd - dt);
     for (const t of this.toasts) t.t -= dt; this.toasts = this.toasts.filter(t => t.t > 0);
     for (const tr of this.tracers) tr.t -= dt; this.tracers = this.tracers.filter(t => t.t > 0);
@@ -267,7 +268,8 @@ export class World {
       car.x += Math.cos(car.a) * car.spd * sdt; car.y += Math.sin(car.a) * car.spd * sdt;
       const c = collide(this.city, car.x, car.y, 30);
       if (c.x !== car.x || c.y !== car.y) {
-        if (Math.abs(car.spd) > 210) { car.hp -= (Math.abs(car.spd) - 200) / 11; if (car === this.player.car) this.player.hp -= (Math.abs(car.spd) - 200) / 22; this.emit('crash'); this.burst(car.x, car.y, 6, '#cccccc'); if (car.hp <= 0 && !car.wrecked) this.wreck(car); }
+        // Impact damage is charged once per impact (crashCd), never per step of wall contact.
+        if (Math.abs(car.spd) > 210 && (car.crashCd || 0) <= 0) { car.crashCd = 0.4; car.hp -= (Math.abs(car.spd) - 200) / 11; if (car === this.player.car && Math.abs(car.spd) > 300) this.player.hp -= (Math.abs(car.spd) - 300) / 20; this.emit('crash'); this.burst(car.x, car.y, 6, '#cccccc'); if (car.hp <= 0 && !car.wrecked) this.wreck(car); }
         car.x = c.x; car.y = c.y; car.spd *= 0.45;
       }
       if (car.x > WORLD.waterX - 16) { car.x = WORLD.waterX - 16; car.spd *= 0.3; }
@@ -278,7 +280,7 @@ export class World {
           const push = (62 - d) / 2, ux = (car.x - o.x) / d, uy = (car.y - o.y) / d;
           car.x += ux * push; car.y += uy * push; o.x -= ux * push; o.y -= uy * push;
           const rel = Math.abs(car.spd - o.spd);
-          if (rel > 150) { car.hp -= rel / 16; o.hp -= rel / 16; if (car === this.player.car || o === this.player.car) this.player.hp -= rel / 30; this.emit('crash'); if (car.hp <= 0 && !car.wrecked) this.wreck(car); if (o.hp <= 0 && !o.wrecked) this.wreck(o); }
+          if (rel > 150 && (car.crashCd || 0) <= 0) { car.crashCd = 0.4; o.crashCd = 0.4; car.hp -= rel / 16; o.hp -= rel / 16; if ((car === this.player.car || o === this.player.car) && rel > 280) this.player.hp -= (rel - 280) / 22; this.emit('crash'); if (car.hp <= 0 && !car.wrecked) this.wreck(car); if (o.hp <= 0 && !o.wrecked) this.wreck(o); }
           car.spd *= 0.88; o.spd *= 0.88; // softened contact momentum
         }
       }
@@ -340,7 +342,7 @@ export class World {
     const p = this.player, d = dist(car.x, car.y, p.x, p.y);
     const los = d < 560 && lineOfSight(this.city, car.x, car.y, p.x, p.y);
     // Officers bail out when close to an on-foot suspect and the car is slow.
-    if (!p.car && d < 300 && Math.abs(car.spd) < 70 && !car.officersOut) this.dropOfficers(car, 2);
+    if (!p.car && d < 230 && Math.abs(car.spd) < 70 && !car.officersOut) this.dropOfficers(car, 2);
     if (p.car && car.officersOut) car.officersOut = false;
     let tx, ty;
     if (los || d < 300) {
@@ -357,6 +359,7 @@ export class World {
     // Pacing: match a slow suspect instead of grinding into them; back off a completed box.
     let top = POLICE.carSpeed;
     if (d < 150) top = Math.min(top, Math.max(p.speed + 130, 120));
+    if (d < 90) top = Math.min(top, p.speed + 45);
     if (!p.car || Math.abs(p.car ? p.car.spd : 0) < 25) {
       if (d < 95) { car.boxT += dt; if (car.boxT > 2.2) car.backoff = 1.1; } else car.boxT = Math.max(0, car.boxT - dt);
     }
@@ -402,10 +405,11 @@ export class World {
       else { ped.dead = true; ped.deadT = 0; }
       return;
     }
-    if (d > 55) this.walkPed(ped, p.x, p.y, POLICE.footSpeed, dt);
+    if (d > 38) this.walkPed(ped, p.x, p.y, POLICE.footSpeed, dt); // close all the way to grabbing distance
     ped.a = Math.atan2(p.y - ped.y, p.x - ped.x);
     ped.fireCd -= dt;
-    if (this.stars >= 2 && d < POLICE.shootRange && ped.fireCd <= 0 && lineOfSight(this.city, ped.x, ped.y, p.x, p.y)) {
+    // Officers hold fire at two stars — there they try to make the arrest; shooting starts at three.
+    if (this.stars >= 3 && d < POLICE.shootRange && ped.fireCd <= 0 && lineOfSight(this.city, ped.x, ped.y, p.x, p.y)) {
       ped.fireCd = 0.7;
       this.tracers.push({ x1: ped.x, y1: ped.y, x2: p.x, y2: p.y, t: 0.07 });
       this.emit('shot', { weapon: 'cop', x: ped.x, y: ped.y });
@@ -414,7 +418,7 @@ export class World {
   }
   updateDealer(ped, dt) {
     const p = this.player, d = dist(ped.x, ped.y, p.x, p.y);
-    const active = this.step && this.step.t === 'kill';
+    const active = this.currentStep && this.currentStep.t === 'kill';
     if ((active && d < 430) || ped.aggro) {
       ped.aggro = true;
       if (d > 240) this.walkPed(ped, p.x, p.y, 150, dt);
@@ -444,9 +448,11 @@ export class World {
   }
   nearInteract() {
     const p = this.player;
-    let best = null, bd = 1e9;
-    for (const pl of this.city.places) { const d = dist(p.x, p.y, pl.x, pl.y); if (d < 98 && d < bd) { bd = d; best = { kind: 'place', place: pl, d }; } }
-    for (const car of this.cars) { if (car.wrecked) continue; const d = dist(p.x, p.y, car.x, car.y); if (d < 88 && d < bd) { bd = d; best = { kind: 'car', car, d }; } }
+    let best = null, bd = 1e9, bestCar = null, bestPlace = null;
+    for (const pl of this.city.places) { const d = dist(p.x, p.y, pl.x, pl.y); if (d < 98 && d < bd) { bd = d; best = { kind: 'place', place: pl, d }; bestPlace = best; } }
+    for (const car of this.cars) { if (car.wrecked) continue; const d = dist(p.x, p.y, car.x, car.y); if (d < 88 && d < bd) { bd = d; best = { kind: 'car', car, d }; } if (d < 88 && (!bestCar || d < bestCar.d)) bestCar = { kind: 'car', car, d }; }
+    // Pressed up against a car, E gets in — unless you are hugging a doorway instead.
+    if (bestCar && bestCar.d < 56 && (!bestPlace || bestPlace.d > 30)) return bestCar;
     return best;
   }
   tryInteract() {
@@ -491,14 +497,14 @@ export class World {
         if (this.spend(PRICES.repair)) { car.hp = 100; car.wrecked = false; this.toast('Taller Sol fixed her up'); this.emit('cash'); } return; }
       case 'bank': {
         if (this.bankCd > 0) { this.toast('The side vault is still re-arming'); return; }
-        if (this.step && this.step.t === 'channel') { this.toast('The story vault comes first'); return; }
+        if (this.currentStep && this.currentStep.t === 'channel') { this.toast('The story vault comes first'); return; }
         this.channel = { x: pl.x, y: pl.y, dur: BANK_SIDE.channel, t: 0, kind: 'bank' }; return; }
     }
   }
 
   // ---------- channels & missions ----------
   updateChannel(inp, dt) {
-    const p = this.player, s = this.step;
+    const p = this.player, s = this.currentStep;
     if (!this.channel && s && s.t === 'channel' && !p.car && dist(p.x, p.y, s.x, s.y) < 58)
       this.channel = { x: s.x, y: s.y, dur: s.dur, t: 0, kind: 'mission' };
     if (!this.channel) return;
@@ -507,18 +513,18 @@ export class World {
     if (this.channel.t >= this.channel.dur) {
       const kind = this.channel.kind; this.channel = null;
       if (kind === 'bank') { p.money += BANK_SIDE.reward; this.bankCd = BANK_SIDE.cooldown; this.addHeat(BANK_SIDE.heat); this.toast('Side vault emptied +$' + BANK_SIDE.reward); this.emit('cash'); }
-      else this.completeStep();
+      else { if (this.currentStep && this.currentStep.heat) this.addHeat(this.currentStep.heat); this.completeStep(); }
     }
   }
   objective() {
-    const s = this.step, p = this.player;
+    const s = this.currentStep, p = this.player;
     if (!s) return this.storyComplete ? { label: 'Free roam — Neon Bay is yours', x: p.x, y: p.y, dist: 0 } : null;
     if (s.t === 'escape') return { label: s.label, x: p.x, y: p.y, dist: 0 };
     if (s.t === 'kill') { const alive = this.peds.filter(d => d.kind === 'dealer' && !d.dead); const d0 = alive[0]; return { label: s.label + ' (' + (s.n - alive.length) + '/' + s.n + ')', x: d0 ? d0.x : p.x, y: d0 ? d0.y : p.y, dist: d0 ? dist(p.x, p.y, d0.x, d0.y) : 0 }; }
     return { label: s.label, x: s.x, y: s.y, dist: dist(p.x, p.y, s.x, s.y) };
   }
   spawnStepNeeds() {
-    const s = this.step; if (!s) return;
+    const s = this.currentStep; if (!s) return;
     if (s.t === 'kill' && !this.peds.some(d => d.kind === 'dealer')) {
       for (const spot of this.city.dealers) this.peds.push({ id: this.rng.int(1, 1e9), kind: 'dealer', x: spot.x, y: spot.y, a: -Math.PI / 2, hp: 60, state: 'guard', tx: spot.x, ty: spot.y, t: 0, fireCd: 0.4, dead: false, hue: 0, aggro: false });
     }
@@ -529,7 +535,7 @@ export class World {
     }
   }
   updateMissions(dt) {
-    const s = this.step, p = this.player;
+    const s = this.currentStep, p = this.player;
     if (!s) return;
     this.spawnStepNeeds();
     let done = false;
@@ -565,9 +571,11 @@ export class World {
   updateBusted(dt) {
     const p = this.player;
     let threat = false;
-    if (!p.car) for (const o of this.peds) if (o.kind === 'officer' && !o.dead && dist(o.x, o.y, p.x, p.y) < 52) threat = true;
-    if (this.heat > 0) for (const c of this.cars) if (c.kind === 'police' && !c.wrecked && dist(c.x, c.y, p.x, p.y) < 78 && p.speed < 40) threat = true;
-    if (threat && this.heat > 0) this.bustedMeter += dt / 1.6; else this.bustedMeter = Math.max(0, this.bustedMeter - dt * 0.7);
+    // A grab needs the suspect slow or cornered: nobody gets cuffed at a full sprint.
+    if (!p.car && p.speed < 240) for (const o of this.peds) if (o.kind === 'officer' && !o.dead && dist(o.x, o.y, p.x, p.y) < 46) threat = true;
+    // In a car you are only busted when genuinely boxed in: two or more units close while you crawl.
+    if (this.heat > 0 && p.speed < 40) { let near = 0; for (const c of this.cars) if (c.kind === 'police' && !c.wrecked && dist(c.x, c.y, p.x, p.y) < 85) near++; if (near >= 2) threat = true; }
+    if (threat && this.heat > 0) this.bustedMeter += dt / 2.2; else this.bustedMeter = Math.max(0, this.bustedMeter - dt * 0.7);
     if (this.bustedMeter >= 1) this.punish('busted');
   }
   punish(kind) {
@@ -603,7 +611,7 @@ export class World {
     this.peds = this.peds.filter(x => x.kind === 'walker');
     this.cars = this.cars.filter(c => c.kind === 'traffic' || c.kind === 'parked');
     if (d.ownedCar) { const car = this.makeCar(d.ownedCar.x, d.ownedCar.y, d.ownedCar.a, d.ownedCar.type, 'owned'); car.tag = 'owned'; car.color = d.ownedCar.color; car.hp = d.ownedCar.hp; car.everStolen = true; this.cars.push(car); }
-    const s = this.step;
+    const s = this.currentStep;
     if (s && (s.t === 'steal' || s.t === 'deliver') && s.car && !this.missionCar(s.car)) this.spawnMissionCar(s.car);
     if (s && s.t === 'kill') this.spawnStepNeeds();
   }
