@@ -11,7 +11,7 @@ import { MISSIONS } from './missions.js';
 import { Rng, clamp, dist, angDiff } from './random.js';
 import { WORLD, STEP, DAY, PLAYER, WANTED, WEAPONS, WEAPON_ORDER, CAR_TYPES, TRAFFIC, PEDS, POLICE, PRICES } from './config.js';
 
-const LANE = 26; // right-hand traffic offset from a road centre line
+const LANE = 18; // right-hand traffic offset from a road centre line
 
 export class World {
   constructor(seed = 1) {
@@ -40,7 +40,7 @@ export class World {
     this.control = { mx: 0, my: 0, aimX: 0, aimY: 0, fire: false, interact: false, sprint: false };
     this.weapons = { fists: true, pistol: false, smg: false, shotgun: false };
     this.weapon = 'fists';
-    this.fireCd = 0; this.crimeCd = 0; this.marketIdx = 0; this.exitGraceT = 0;
+    this.fireCd = 0; this.crimeCd = 0; this.carCrimeCd = 0; this.marketIdx = 0; this.exitGraceT = 0;
 
     const s = this.city.spawn;
     this.player = {
@@ -123,7 +123,7 @@ export class World {
   spawnParked() {
     const spots = [];
     for (const lot of this.city.lots) for (let i = 0; i < 10; i++) spots.push({ x: lot.x + 60 + (i % 5) * 84, y: lot.y + 120 + Math.floor(i / 5) * 150 });
-    for (const ax of this.city.avenues) for (let i = 0; i < 3; i++) spots.push({ x: ax + 44, y: 200 + i * 1150 + this.rngSpawn.next() * 300 });
+    for (const ax of this.city.avenues) for (let i = 0; i < 3; i++) spots.push({ x: ax + 47, y: 200 + i * 1150 + this.rngSpawn.next() * 300 });
     let n = 0;
     for (const s of spots) {
       if (n++ >= TRAFFIC.parked) break;
@@ -174,13 +174,15 @@ export class World {
   spawnWalkers() {
     for (let i = 0; i < PEDS.walkers; i++) {
       let x, y;
-      if (i % 5 === 4) { x = this.city.boardwalkX + this.rngSpawn.range(-14, 40); y = this.rngSpawn.range(120, WORLD.h - 120); }
+      const beach = i % 5 === 4;
+      if (beach) { x = this.city.boardwalkX + this.rngSpawn.range(-14, 40); y = this.rngSpawn.range(120, WORLD.h - 120); }
       else {
         const ax = this.rngSpawn.pick(this.city.avenues), sy = this.rngSpawn.pick(this.city.streets);
         if (this.rngSpawn.chance(0.5)) { x = ax + this.rngSpawn.sign() * (this.city.roadHalf + 16); y = this.rngSpawn.range(80, WORLD.h - 80); }
         else { x = this.rngSpawn.range(80, this.city.sandX - 60); y = sy + this.rngSpawn.sign() * (this.city.roadHalf + 16); }
       }
-      this.makePed(x, y, 'walker');
+      const ped = this.makePed(x, y, 'walker');
+      ped.beach = beach;
     }
   }
 
@@ -428,7 +430,7 @@ export class World {
       for (const ped of this.peds) {
         if (ped.dead) continue;
         if (dist(p.x, p.y, ped.x, ped.y) < w.range + 12 && Math.abs(angDiff(p.a, Math.atan2(ped.y - p.y, ped.x - p.x))) < 1.1) {
-          this.hurtPed(ped, w.dmg, Math.atan2(ped.y - p.y, ped.x - p.x));
+          this.hurtPed(ped, w.dmg, Math.atan2(ped.y - p.y, ped.x - p.x), true);
         }
       }
       return;
@@ -461,19 +463,24 @@ export class World {
     }
     const ex = x + dx * bestT, ey = y + dy * bestT;
     this.fx.tracers.push({ x1: x, y1: y, x2: ex, y2: ey, life: 0.07 });
-    if (hitPed) { this.stats.hits++; this.hurtPed(hitPed, w.dmg, a); }
+    if (hitPed) { this.stats.hits++; this.hurtPed(hitPed, w.dmg, a, true); }
     if (hitCar) { hitCar.hp -= w.dmg; if (hitCar.hp <= 0 && !hitCar.dead) this.wreckCar(hitCar); }
   }
 
-  hurtPed(ped, dmg, fromA) {
+  // Damage to a pedestrian. The crime and the loot drop belong to whoever
+  // caused it: traffic accidents are tragic ambience, not the player's rap
+  // sheet — only player-caused harm (byPlayer) raises heat or drops loot.
+  hurtPed(ped, dmg, fromA, byPlayer = false) {
     ped.hp -= dmg;
     ped.x += Math.cos(fromA) * 7; ped.y += Math.sin(fromA) * 7;
-    if (ped.kind === 'walker') { ped.state = 'flee'; ped.fleeT = 2.5; ped.tx = ped.x - Math.cos(fromA) * 240; ped.ty = ped.y - Math.sin(fromA) * 240; }
+    if (ped.kind === 'walker') { ped.state = 'flee'; ped.fleeT = 2.5; ped.wx = ped.wy = null; ped.tx = ped.x - Math.cos(fromA) * 240; ped.ty = ped.y - Math.sin(fromA) * 240; }
     if (ped.hp <= 0 && !ped.dead) {
       ped.dead = true;
-      this.addCrime(ped.kind === 'officer' ? 130 : 70, ped.x, ped.y, ped);
-      if (ped.kind === 'dealer') this.pickups.push({ x: ped.x, y: ped.y, kind: 'money', amount: this.rng.int(15, 40), active: true });
-      else if (ped.kind === 'walker' && this.rng.chance(0.4)) this.pickups.push({ x: ped.x, y: ped.y, kind: 'money', amount: this.rng.int(5, 20), active: true });
+      if (byPlayer) {
+        this.addCrime(ped.kind === 'officer' ? 130 : 70, ped.x, ped.y, ped);
+        if (ped.kind === 'dealer') this.pickups.push({ x: ped.x, y: ped.y, kind: 'money', amount: this.rng.int(15, 40), active: true });
+        else if (ped.kind === 'walker' && this.rng.chance(0.4)) this.pickups.push({ x: ped.x, y: ped.y, kind: 'snack', active: true });
+      }
       if (ped.kind === 'officer') for (const c of this.cars) if (c.officer === ped) c.officer = null;
     }
   }
@@ -499,6 +506,7 @@ export class World {
     this.timeMinutes = (this.timeMinutes + DAY.rate * dt) % (24 * 60);
     if (this.fireCd > 0) this.fireCd -= dt;
     if (this.crimeCd > 0) this.crimeCd -= dt;
+    if (this.carCrimeCd > 0) this.carCrimeCd -= dt;
     if (this.bankCooldown > 0) this.bankCooldown -= dt;
     if (this.exitGraceT > 0) this.exitGraceT -= dt;
     this.toasts = this.toasts.filter(t => t.until > this.t);
@@ -520,13 +528,22 @@ export class World {
     if (live < TRAFFIC.count) this.spawnTraffic(false);
   }
 
+  // Semi-automatic weapons (and fists) need a fresh press per shot; only
+  // the SMG keeps firing while the trigger is held.
+  tryFire(dt) {
+    const c = this.control;
+    const auto = WEAPONS[this.weapon].auto;
+    if (c.fire && (auto || !this._fireLatch)) this.fireWeapon(dt);
+    this._fireLatch = !!c.fire;
+  }
+
   updatePlayer(dt) {
     const p = this.player, c = this.control;
     if (p.inCar) {
       const car = p.inCar;
       this.driveCar(car, c.my, c.mx, dt, true);
       p.x = car.x; p.y = car.y; p.a = car.a; p.speedNow = Math.abs(car.speed);
-      if (c.fire && this.weapon !== 'fists') this.fireWeapon(dt); // drive-by with a gun
+      if (this.weapon !== 'fists') this.tryFire(dt); // drive-by with a gun
       return;
     }
     let mx = c.mx, my = c.my;
@@ -539,7 +556,7 @@ export class World {
     if (c.aimX || c.aimY) p.a = Math.atan2(c.aimY - p.y, c.aimX - p.x);
     const [nx, ny] = collideCircle(this.city, p.x, p.y, PLAYER.radius);
     p.x = nx; p.y = ny;
-    if (c.fire) this.fireWeapon(dt);
+    this.tryFire(dt);
   }
 
   // Shared car movement: throttle -1..1, steer -1..1.
@@ -564,33 +581,39 @@ export class World {
       if (impact > 190) { car.hp -= (impact - 190) * 0.12; this.emit('crash'); if (car.hp <= 0 && !car.dead) this.wreckCar(car); }
       car.speed *= -0.18;
     }
-    // car vs car: soft push-apart, momentum softened
+    // car vs car, in the moving car's frame: a car is ~58 long and ~30
+    // wide, so contact needs both axes close. Kerb-parked cars sit 29+
+    // units off the traffic lane and are passed cleanly.
+    const fwdX = Math.cos(car.a), fwdY = Math.sin(car.a);
     for (const o of this.cars) {
       if (o === car || o.dead) continue;
-      const d = dist(car.x, car.y, o.x, o.y);
-      if (d < 56 && d > 0.01) {
-        const push = (56 - d) / 2, ux = (car.x - o.x) / d, uy = (car.y - o.y) / d;
-        car.x += ux * push; car.y += uy * push;
-        if (!o.parked) { o.x -= ux * push; o.y -= uy * push; }
+      const rx = o.x - car.x, ry = o.y - car.y;
+      const lon = rx * fwdX + ry * fwdY, lat = -rx * fwdY + ry * fwdX;
+      if (Math.abs(lon) < 58 && Math.abs(lat) < 27) {
+        const push = (27 - Math.abs(lat)) * Math.sign(lat || 1);
+        car.x += -fwdY * push * 0.5; car.y += fwdX * push * 0.5;
+        if (!o.parked) { o.x -= -fwdY * push * 0.5; o.y -= fwdX * push * 0.5; }
         const rel = Math.abs(car.speed - o.speed);
         if (rel > 120) {
           car.hp -= (rel - 120) * 0.06; o.hp -= (rel - 120) * 0.06;
           this.emit('crash');
-          if (isPlayer) this.addCrime(WANTED.crimeHitCar, car.x, car.y);
+          // One crime per collision, not per tick of grinding contact.
+          if (isPlayer && this.carCrimeCd <= 0) { this.addCrime(WANTED.crimeHitCar, car.x, car.y); this.carCrimeCd = 1.5; }
           if (car.hp <= 0 && !car.dead) this.wreckCar(car);
           if (o.hp <= 0 && !o.dead) this.wreckCar(o);
         }
         car.speed *= 0.88; o.speed *= 0.88;
       }
     }
-    // running a pedestrian down
+    // running a pedestrian down: lethal at speed; the death crime lands in
+    // hurtPed when the player is the driver (a 1.1s grace right after
+    // stepping out of a car keeps a brush from becoming a felony)
     if (Math.abs(car.speed) > 60) {
       for (const ped of this.peds) {
         if (ped.dead) continue;
         if (dist(car.x, car.y, ped.x, ped.y) < 34) {
-          this.hurtPed(ped, 100, car.a);
-          if (isPlayer && !(this.exitGraceT > 0)) this.addCrime(WANTED.crimeHitPed, ped.x, ped.y, ped);
-          else if (isPlayer) this.addCrime(10, ped.x, ped.y, ped);
+          this.hurtPed(ped, 100, car.a, isPlayer && !(this.exitGraceT > 0));
+          if (isPlayer && this.exitGraceT > 0) this.addCrime(10, ped.x, ped.y, ped);
           car.speed *= 0.72;
         }
       }
@@ -635,13 +658,35 @@ export class World {
       let steer = clamp(angDiff(car.a, want) * 1.6, -1, 1);
       // Brake for anything ahead: cars, the player, pedestrians.
       let throttle = car.speed < car.cruise ? 0.75 : 0;
-      const aheadX = car.x + Math.cos(car.a) * 86, aheadY = car.y + Math.sin(car.a) * 86;
+      const aheadX = car.x + Math.cos(car.a) * 96, aheadY = car.y + Math.sin(car.a) * 96;
       const blocked =
         this.cars.some(o => o !== car && !o.dead && dist(aheadX, aheadY, o.x, o.y) < 44) ||
-        dist(aheadX, aheadY, this.player.x, this.player.y) < 44 ||
-        this.peds.some(pd => !pd.dead && dist(aheadX, aheadY, pd.x, pd.y) < 34);
+        dist(aheadX, aheadY, this.player.x, this.player.y) < 46 ||
+        this.peds.some(pd => !pd.dead && dist(aheadX, aheadY, pd.x, pd.y) < 46);
       if (blocked) throttle = car.speed > 8 ? -0.85 : 0;
+      // Jam breaker: a car held by its own brake for seconds on end is
+      // in a deadlock queue — real drivers edge forward. Creep slowly
+      // until the queue dissolves instead of freezing the junction.
+      if (blocked && Math.abs(car.speed) < 14) car.jamT = (car.jamT || 0) + dt; else car.jamT = 0;
+      if ((car.jamT || 0) > 4) throttle = car.speed < 40 ? 0.3 : 0;
       this.driveCar(car, throttle, steer, dt);
+      // Hopelessly stuck traffic (wedged on a parked car, boxed in a
+      // dead queue) gives up and leaves the area — the standard
+      // open-world cure for a frozen street.
+      if (Math.abs(car.speed) < 14) car.stuckRoadT = (car.stuckRoadT || 0) + dt; else car.stuckRoadT = 0;
+      if ((car.stuckRoadT || 0) > 7 && dist(car.x, car.y, this.player.x, this.player.y) > 350) {
+        const inters = this.city.avenues.map(ax => this.city.streets.map(sy => ({ x: ax, y: sy }))).flat()
+          .filter(i => dist(i.x, i.y, this.player.x, this.player.y) > 800);
+        if (inters.length) {
+          const spot = this.rngSpawn.pick(inters);
+          const vertical = this.rngSpawn.chance(0.5);
+          car.x = spot.x; car.y = spot.y;
+          car.a = vertical ? (this.rngSpawn.chance(0.5) ? -Math.PI / 2 : Math.PI / 2) : (this.rngSpawn.chance(0.5) ? 0 : Math.PI);
+          car.axis = vertical ? 'v' : 'h';
+          car.dir = vertical ? Math.sign(Math.sin(car.a)) : Math.sign(Math.cos(car.a));
+          car.speed = 0; car.stuckRoadT = 0; car.jamT = 0;
+        }
+      }
       // despawn far-away traffic
       if (dist(car.x, car.y, this.player.x, this.player.y) > TRAFFIC.despawnDist) {
         car.dead = true; car.driver = null;
@@ -661,15 +706,57 @@ export class World {
         if (ped.fleeT <= 0) ped.state = 'wander';
         continue;
       }
-      if (dist(ped.x, ped.y, ped.tx, ped.ty) < 18 || ped.tx === ped.x && ped.ty === ped.y) {
-        ped.tx = clamp(ped.x + this.rng.range(-420, 420), 40, this.city.waterX - 30);
-        ped.ty = clamp(ped.y + this.rng.range(-420, 420), 40, WORLD.h - 40);
-        if (!isOnRoad(this.city, ped.tx, ped.ty) && this.rng.chance(0.6)) {
-          const inter = nearestIntersection(this.city, ped.tx, ped.ty);
-          ped.tx = inter.x + this.rng.sign() * (this.city.roadHalf + 16); ped.ty = inter.y;
+      if (ped.wx != null && dist(ped.x, ped.y, ped.wx, ped.wy) < 16) ped.wx = ped.wy = null;
+      if (ped.wx == null && (dist(ped.x, ped.y, ped.tx, ped.ty) < 18 || ped.tx === ped.x && ped.ty === ped.y)) {
+        // New stroll target: always on a sidewalk line or the boardwalk —
+        // pedestrians live on pavements, they do not wander the carriageway.
+        if (ped.beach) {
+          ped.tx = this.city.boardwalkX + this.rng.range(-14, 44);
+          ped.ty = clamp(ped.y + this.rng.range(-520, 520), 60, WORLD.h - 60);
+        } else if (this.rng.chance(0.5)) {
+          ped.tx = this.rng.pick(this.city.avenues) + this.rng.sign() * (this.city.roadHalf + 16);
+          ped.ty = this.rng.range(60, WORLD.h - 60);
+        } else {
+          ped.tx = this.rng.range(60, this.city.sandX - 80);
+          ped.ty = this.rng.pick(this.city.streets) + this.rng.sign() * (this.city.roadHalf + 16);
+        }
+        // Cross at the nearest junction corner, not diagonally through
+        // moving traffic: waypoint first, then the final target.
+        const inter = nearestIntersection(this.city, ped.x, ped.y);
+        ped.wx = inter.x + Math.sign(ped.tx - inter.x || 1) * (this.city.roadHalf + 16);
+        ped.wy = inter.y + Math.sign(ped.ty - inter.y || 1) * (this.city.roadHalf + 16);
+        if (dist(ped.x, ped.y, ped.wx, ped.wy) < 20) ped.wx = ped.wy = null;
+      }
+      // Hurry across the carriageway; amble on the pavement. And look
+      // both ways: a walker about to step onto the road waits for a
+      // gap when traffic is bearing down on the crossing point.
+      const gx = ped.wx != null ? ped.wx : ped.tx, gy = ped.wy != null ? ped.wy : ped.ty;
+      const onRoadNow = isOnRoad(this.city, ped.x, ped.y);
+      const gdx = gx - ped.x, gdy = gy - ped.y, gd = Math.hypot(gdx, gdy) || 1;
+      const steppingOn = !onRoadNow && isOnRoad(this.city, ped.x + (gdx / gd) * 38, ped.y + (gdy / gd) * 38);
+      let waitForTraffic = false;
+      if (steppingOn) {
+        for (const c of this.cars) {
+          if (c.dead || Math.abs(c.speed) < 40) continue;
+          const dx = ped.x - c.x, dy = ped.y - c.y, d = Math.hypot(dx, dy);
+          if (d > 150) continue;
+          const vx = Math.cos(c.a) * c.speed, vy = Math.sin(c.a) * c.speed;
+          if ((vx * dx + vy * dy) / ((d || 1) * Math.abs(c.speed)) > 0.55) { waitForTraffic = true; break; }
         }
       }
-      this.movePed(ped, ped.tx, ped.ty, PEDS.speed, dt);
+      // Already committed to the crossing with traffic bearing down:
+      // dash for the far curb rather than ambling into the bumper.
+      let crossSpeed = 128;
+      if (onRoadNow) {
+        for (const c of this.cars) {
+          if (c.dead || Math.abs(c.speed) < 40) continue;
+          const dx = ped.x - c.x, dy = ped.y - c.y, d = Math.hypot(dx, dy);
+          if (d > 175) continue;
+          const vx = Math.cos(c.a) * c.speed, vy = Math.sin(c.a) * c.speed;
+          if ((vx * dx + vy * dy) / ((d || 1) * Math.abs(c.speed)) > 0.4) { crossSpeed = 208; break; }
+        }
+      }
+      if (!waitForTraffic) this.movePed(ped, gx, gy, onRoadNow ? crossSpeed : PEDS.speed, dt);
     }
     this.peds = this.peds.filter(p => !p.dead || p.kind === 'dealer');
   }
@@ -717,11 +804,16 @@ export class World {
         if (!car.officer && car.driver === 'ai') this.patrolDrive(car, dt);
         continue;
       }
-      // Deploy the officer when the suspect is on foot nearby, or boxed in.
-      const wantOfficer = (!p.inCar && d < 250) || (p.inCar && Math.abs(p.inCar.speed) < 22 && d < 140);
+      // Deploy the officer when the suspect is on foot nearby — or when
+      // their car has genuinely been held slow beside this unit for a
+      // while (a real box). Merely pausing in traffic must not put an
+      // officer on foot in front of a car about to pull away.
+      if (p.inCar && Math.abs(p.inCar.speed) < 22 && d < 140) car.deployT = (car.deployT || 0) + dt;
+      else car.deployT = 0;
+      const wantOfficer = (!p.inCar && d < 250) || (car.deployT || 0) > 1.3;
       if (wantOfficer && !car.officer && car.driver === 'ai') {
         car.driver = null; car.speed = 0;
-        const off = this.makePed(car.x + 36, car.y + 10, 'officer');
+        const off = this.makePed(car.x + Math.cos(car.a + Math.PI / 2) * 38, car.y + Math.sin(car.a + Math.PI / 2) * 38, 'officer');
         off.homeCar = car; car.officer = off;
       }
       if (car.officer && !car.officer.dead) {
