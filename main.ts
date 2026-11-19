@@ -12,7 +12,7 @@
 // MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -38,4 +38,13 @@ writeFileSync(
     game_max_bytes: 50331648,
     game_path_max_bytes: 1000,
   }),
+);
+
+// Read the dossier back and report what was handed in, so a human running
+// this by hand can see the entry's shape (and spot a cap problem) at a glance.
+const handed = JSON.parse(readFileSync(join(out, 'dossier.json'), 'utf8'));
+const sourceSections = (String(handed.text).match(/^### game\//gm) ?? []).length;
+console.log(
+  `NEON BAY handed in: ${sourceSections} source files, ${handed.images.length} screenshots, ` +
+  `${Buffer.byteLength(String(handed.text))} text bytes, dossier ${statSync(join(out, 'dossier.json')).size} bytes.`,
 );

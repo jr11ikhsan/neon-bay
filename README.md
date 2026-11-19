@@ -4,50 +4,74 @@
 
 # NEON BAY
 
-A 3D low-poly crime story on a neon tropical beach at dusk, built for the
-make.fun "Make GTA 6" contest (gta6-01). Steal the gold coupe, run the
-package, shut down the beach dealers, take the bank, run the night
-delivery, empty the vault one last time — and lose the heat. Six chained
-story missions, three buyable guns (pistol, SMG, shotgun), cars for sale,
-and every place in the city open for business: the clinic heals, the desk
-sergeant takes bribes, the hotel rents rest, the garage repairs, the
-safehouse saves, and the bank can be hit again in free roam.
+A 3D open-world crime story in a low-poly neon beach city at dusk, built with
+Three.js. Steal the gold coupe, run packages, crack the Banco Neon vault, and
+become a Bay Legend — while the whole Comisaria 9 tries to box you in.
+
+**NEON BAY v2** is a ground-up rebuild: a brighter night (strong moonlight and
+neon emission so the city glows after dark), smarter police that pace, flank
+and back off to re-engage instead of gluing onto your bumper, and traffic
+that brakes for pedestrians instead of flattening them.
+
+## The game
+
+- **Six chained story missions, $6,200 total** — steal a gold coupe, run a hot
+  package, drop three beach dealers, crack the bank vault (twice), deliver a
+  stolen racer, and meet the buyer at the pier under a five-star sky.
+- **Three buyable guns** — pistol (precise, semi-auto), SMG (full auto),
+  shotgun (six pellets), plus your fists. Dealers shoot back.
+- **Cars you can steal and buy** — carjack anything that moves, or buy your
+  own sedan at Bay Motors. Wrecked mission cars are replaced at the lot.
+- **A wanted system with encirclement** — five stars, witnesses and line of
+  sight, heat that decays only when nobody sees you, patrol cars that flank
+  and foot officers who move in for the bust.
+- **A full place economy** — Clinica Sol heals ($40), the police desk takes
+  bribes ($150), Hotel Lumina rests and saves ($60), Market Sol sells snacks
+  and guns, Taller Sol repairs ($50), the safehouse saves and burns heat, and
+  the bank's side vault can be cracked again and again ($700, on a cooldown).
+- **A living city** — 4800×3600 world: grid avenues, a boardwalk, palms,
+  traffic with lanes and braking, wandering pedestrians, a dusk-to-night
+  cycle from 17:35, HUD with minimap, title / pause / busted / wasted
+  screens, and a localStorage save with Continue.
 
 ## Run it
 
+The game is plain static files and runs fully offline — no build step, no
+network. From this folder:
+
 ```
-node serve.ts          # serves game/ at http://localhost:8080
+node serve.ts
 ```
 
-Then open the page, click or press Enter, and play. Fully offline: no CDN,
-no network calls, no build step.
+then open <http://localhost:8080>. (Any static file server pointed at
+`game/` works just as well.)
 
-Controls: WASD / arrows move and drive · mouse aims · click punches or
-shoots · E enters and exits cars — and uses whatever place you are
-standing at · 1/2/3/4 or Q switch weapons · Shift runs · P / Esc pauses
-(and shows your run stats) · M mutes · C continues a saved game from the
-title screen.
+## Controls
+
+| Input | Action |
+| --- | --- |
+| WASD / arrows | Move / drive |
+| Mouse | Aim (on foot) |
+| Click / Space | Punch / shoot |
+| E | Interact: enter/exit cars, use places |
+| 1–4 / Q | Switch weapon (Q cycles owned) |
+| Shift | Run |
+| P / Esc | Pause (stats, save with S, restart with R) |
+| M | Mute |
+| Enter / C | Start / Continue on the title screen |
 
 ## Layout
 
-- `game/index.html` — page with the stacked WebGL + HUD canvases
-- `game/src/` — the game itself, hand-written for this contest:
-  - `world.js` — the simulation (traffic, pedestrians, police and the
-    five-star wanted system with encircling units, the three-gun armoury,
-    the place economy, the six-mission story, saves and run statistics)
-  - `render.js` — the Three.js scene (procedural low-poly city, beach and
-    ocean, dusk-to-night light) plus the 2D HUD / minimap overlay
-  - `city.js`, `config.js`, `random.js` — the procedural city layout, tuning
-    constants and the seeded RNG
-  - `missions.js`, `input.js`, `audio.js` — story data, controls, and the
-    procedural WebAudio soundscape
-  - `shots.js`, `main.js` — deterministic screenshot scenes and the boot /
-    game loop
-- `game/lib/three.min.js` — **third-party dependency**: Three.js r160
-  (https://threejs.org), MIT License, © 2010–2023 three.js authors. It is a
-  library we build on, not our own work; its license ships alongside it in
-  `game/lib/THREE-LICENSE.txt`. It is vendored into the repo so the game
-  runs completely offline.
-- `vendor/makefun-game.ts` — the contest kit's dossier builder (unmodified)
-- `main.ts` — builds the submission dossier into the output directory
-- `screenshots/` — real captures from the running game
+- `game/` — the game itself: `index.html` plus ES modules in `game/src/`
+  (simulation in `world.js`, city generation in `city.js`, rendering in
+  `render.js`, missions as data in `missions.js`). It loads with no build
+  step and no network.
+- `game/vendor/three.module.min.js` — Three.js r160 (MIT, © the three.js
+  authors; license in `game/vendor/THREE-LICENSE.txt`), vendored as a
+  dependency so the game works offline. It is a library, not our work.
+- `main.ts` — the contest hand-in: copies `game/` and `screenshots/` to the
+  output directory and writes `dossier.json`.
+- `vendor/makefun-game.ts` — the unmodified make.fun kit library used by
+  `main.ts`.
+- `shots.json` + `screenshots/` — the four deterministic scenes
+  (`?shot=start|play|chase|end&seed=1`) used for the screenshots.
