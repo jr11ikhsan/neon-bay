@@ -7,7 +7,7 @@
 // Three.js is a third-party MIT library (see game/lib/THREE-LICENSE.txt),
 // loaded as a classic script before this module: window.THREE.
 
-import { VIEW, WORLD, ROADS, PALETTE, FONT, TITLE_FONT, DAY } from './config.js';
+import { VIEW, WORLD, ROADS, PALETTE, FONT, TITLE_FONT, DAY, BEST_KEY } from './config.js';
 
 const THREE = window.THREE;
 
@@ -1175,7 +1175,7 @@ export function createRenderer(glCanvas, hudCanvas) {
       h.fillStyle = PALETTE.text;
       h.font = `bold 19px ${FONT}`;
       h.textAlign = 'right';
-      h.fillText(p.hasGun ? 'WEAPON: PISTOL' : 'WEAPON: FISTS', VIEW.width - 30, VIEW.height - 33);
+      h.fillText(`WEAPON: ${world.weaponLabel()}`, VIEW.width - 30, VIEW.height - 33);
     }
     if (opts.muted) {
       h.fillStyle = 'rgba(245,242,234,0.6)';
@@ -1204,6 +1204,17 @@ export function createRenderer(glCanvas, hudCanvas) {
         h.closePath(); h.fill();
         h.restore();
       }
+    }
+
+    // Contextual place prompt (what E does here), above the objective line.
+    const prompt = typeof world.promptText === 'function' ? world.promptText() : '';
+    if (prompt) {
+      h.font = `bold 16px ${FONT}`;
+      const w = Math.min(560, h.measureText(prompt).width + 36);
+      panel(VIEW.width / 2 - w / 2, VIEW.height - 96, w, 32);
+      h.fillStyle = PALETTE.neonCyan;
+      h.textAlign = 'center';
+      h.fillText(prompt, VIEW.width / 2, VIEW.height - 74);
     }
 
     // Objective line.
@@ -1342,7 +1353,7 @@ export function createRenderer(glCanvas, hudCanvas) {
     h.restore();
   }
 
-  function drawPause() {
+  function drawPause(world) {
     h.fillStyle = 'rgba(8,6,18,0.62)';
     h.fillRect(0, 0, VIEW.width, VIEW.height);
     h.textAlign = 'center';
@@ -1351,12 +1362,27 @@ export function createRenderer(glCanvas, hudCanvas) {
     h.shadowBlur = 24;
     h.fillStyle = PALETTE.neonCyan;
     h.font = `58px ${TITLE_FONT}`;
-    h.fillText('PAUSED', VIEW.width / 2, 268);
+    h.fillText('PAUSED', VIEW.width / 2, 250);
     h.restore();
     h.fillStyle = PALETTE.text;
     h.font = `20px ${FONT}`;
-    h.fillText('P / Esc — resume      S — save now      R — restart the story', VIEW.width / 2, 330);
-    h.fillText('Your progress also saves itself after every mission.', VIEW.width / 2, 362);
+    h.fillText('P / Esc — resume      S — save now      R — restart the story', VIEW.width / 2, 306);
+    h.fillText('Your progress also saves itself after every mission.', VIEW.width / 2, 336);
+    // The run so far, in numbers.
+    if (world) {
+      const s = world.stats;
+      let best = 0;
+      try { best = Number(window.localStorage.getItem(BEST_KEY) || 0); } catch { /* no storage */ }
+      const mins = Math.floor((s.timePlayed || 0) / 60);
+      const secs = Math.floor((s.timePlayed || 0) % 60);
+      h.fillStyle = 'rgba(245,242,234,0.75)';
+      h.font = `17px ${FONT}`;
+      h.fillText(
+        `Missions ${s.missions}/6 · Cars stolen ${s.stolen} · Shots fired ${s.shotsFired} · Time in the bay ${mins}:${String(secs).padStart(2, '0')} · Best money $${Math.max(best, world.money)}`,
+        VIEW.width / 2, 384,
+      );
+      h.fillText('Weapons: 1 fists · 2 pistol · 3 SMG · 4 shotgun · Q switch — buy guns at Market Sol', VIEW.width / 2, 412);
+    }
   }
 
   function drawFate(world) {
@@ -1404,7 +1430,7 @@ export function createRenderer(glCanvas, hudCanvas) {
     }
     drawHUD(world, opts);
     if (world.fate) drawFate(world);
-    if (screen === 'paused') drawPause();
+    if (screen === 'paused') drawPause(world);
   }
 
   function setQuality(high) {

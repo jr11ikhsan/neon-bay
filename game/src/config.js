@@ -39,6 +39,21 @@ export const GUN = {
   spread: 0.035,
 };
 
+// The armoury: three guns with genuinely different feels — the pistol is
+// precise, the SMG sprays fast and weak, the shotgun throws a wall of
+// pellets that ends arguments up close. Bought at Market Sol.
+export const WEAPONS = {
+  pistol: { label: 'PISTOL', range: 460, damage: 34, cooldown: 0.22, spread: 0.035, pellets: 1, auto: false },
+  smg: { label: 'SMG', range: 430, damage: 15, cooldown: 0.085, spread: 0.075, pellets: 1, auto: true },
+  shotgun: { label: 'SHOTGUN', range: 300, damage: 13, cooldown: 0.85, spread: 0.17, pellets: 6, auto: false },
+};
+
+// What the bay's places charge: the economy that turns money into progress.
+export const PRICES = {
+  clinicHeal: 40, policeBribe: 150, hotelRoom: 60, snack: 15,
+  smg: 600, shotgun: 900, car: 800, repair: 50, bankHeist: 700,
+};
+
 export const CAR = {
   width: 46,
   length: 92,

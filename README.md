@@ -2,7 +2,12 @@
 
 A 3D low-poly crime story on a neon tropical beach at dusk, built for the
 make.fun "Make GTA 6" contest (gta6-01). Steal the gold coupe, run the
-package, shut down the beach dealers, take the bank — and lose the heat.
+package, shut down the beach dealers, take the bank, run the night
+delivery, empty the vault one last time — and lose the heat. Six chained
+story missions, three buyable guns (pistol, SMG, shotgun), cars for sale,
+and every place in the city open for business: the clinic heals, the desk
+sergeant takes bribes, the hotel rents rest, the garage repairs, the
+safehouse saves, and the bank can be hit again in free roam.
 
 ## Run it
 
@@ -14,15 +19,18 @@ Then open the page, click or press Enter, and play. Fully offline: no CDN,
 no network calls, no build step.
 
 Controls: WASD / arrows move and drive · mouse aims · click punches or
-shoots · E enters and exits cars · Shift runs · P / Esc pauses · M mutes ·
-C continues a saved game from the title screen.
+shoots · E enters and exits cars — and uses whatever place you are
+standing at · 1/2/3/4 or Q switch weapons · Shift runs · P / Esc pauses
+(and shows your run stats) · M mutes · C continues a saved game from the
+title screen.
 
 ## Layout
 
 - `game/index.html` — page with the stacked WebGL + HUD canvases
 - `game/src/` — the game itself, hand-written for this contest:
   - `world.js` — the simulation (traffic, pedestrians, police and the
-    five-star wanted system, combat, the four-mission story, saves)
+    five-star wanted system with encircling units, the three-gun armoury,
+    the place economy, the six-mission story, saves and run statistics)
   - `render.js` — the Three.js scene (procedural low-poly city, beach and
     ocean, dusk-to-night light) plus the 2D HUD / minimap overlay
   - `city.js`, `config.js`, `random.js` — the procedural city layout, tuning

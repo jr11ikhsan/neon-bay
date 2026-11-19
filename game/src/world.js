@@ -1,13 +1,15 @@
 // NEON BAY — the simulation. Everything that moves or can be hurt lives here:
 // the player on foot and behind the wheel, traffic that follows the lanes,
 // pedestrians who mind their business until they don't, police cars and foot
-// cops driven by a five-star wanted system, fists and a pistol, pickups, and
-// the four-mission story engine that reads missions.js. This module is kept
-// free of DOM calls so it can be stepped headlessly; the loop in main.js feeds
-// it a controls object and the audio facade, and render.js only reads it.
+// cops driven by a five-star wanted system, an armoury of three guns, a
+// working economy across every place in the city, and the six-mission story
+// engine that reads missions.js. This module is kept free of DOM calls so it
+// can be stepped headlessly; the loop in main.js feeds it a controls object
+// and the audio facade, and render.js only reads it.
 
 import {
-  WORLD, ROADS, PLAYER, GUN, CAR, TRAFFIC, PEDS, POLICE, WANTED, DAY,
+  WORLD, ROADS, PLAYER, CAR, TRAFFIC, PEDS, POLICE, WANTED, DAY,
+  WEAPONS, PRICES,
 } from './config.js';
 import { createCity, collideWorld, lineOfSight, isOnRoad } from './city.js';
 import { createRandom, rngTools } from './random.js';
@@ -65,10 +67,15 @@ export function createWorld(seed = 1) {
     cars: [],
     peds: [],
     cops: [],
-    stats: { stolen: 0, kills: 0, missions: 0, shotsFired: 0 },
+    stats: { stolen: 0, kills: 0, missions: 0, shotsFired: 0, timePlayed: 0 },
     onMissionComplete: null,
+    onSaveRequest: null,
     mission: null,
     missionCar: null,
+    jobCar: null,
+    ownedCar: null,
+    channelAction: null, // free-roam channeled action (the bank side vault)
+    bankReadyAt: 0,
     player: null,
   };
 
@@ -77,9 +84,39 @@ export function createWorld(seed = 1) {
     // risks landing inside a generated building, which then ejects the player.
     x: 352, y: 2860, angle: -Math.PI / 2,
     health: PLAYER.health, car: null, hasGun: false,
+    weapons: { pistol: false, smg: false, shotgun: false },
+    weapon: 'fists',
     punchCd: 0, shootCd: 0, hurtT: 0, dead: false,
   };
   world.player = player;
+
+  // ---------- weapons ----------
+
+  function grantWeapon(name) {
+    player.weapons[name] = true;
+    player.hasGun = true;
+    if (player.weapon === 'fists') player.weapon = name;
+  }
+
+  world.setWeapon = (name) => {
+    if (name === 'fists' || player.weapons[name]) {
+      if (player.weapon !== name) {
+        player.weapon = name;
+        world.toast(name === 'fists' ? 'Fists' : WEAPONS[name].label);
+      }
+    }
+  };
+
+  world.cycleWeapon = () => {
+    const order = ['fists', 'pistol', 'smg', 'shotgun'];
+    let i = order.indexOf(player.weapon);
+    for (let n = 0; n < order.length; n += 1) {
+      i = (i + 1) % order.length;
+      if (order[i] === 'fists' || player.weapons[order[i]]) { world.setWeapon(order[i]); return; }
+    }
+  };
+
+  world.weaponLabel = () => (player.weapon === 'fists' ? 'FISTS' : WEAPONS[player.weapon].label);
 
   // ---------- spawning ----------
 
@@ -154,6 +191,31 @@ export function createWorld(seed = 1) {
     world.cars.push(coupe);
     world.missionCar = coupe;
     return coupe;
+  }
+
+  // Mission 5's mark: a cyan racer waiting on the same lot.
+  function spawnJobCar() {
+    if (world.jobCar && world.cars.includes(world.jobCar)) return world.jobCar;
+    const lotPlace = city.places.carLot;
+    let x = lotPlace.x + 60, y = lotPlace.y + 30, angle = Math.PI / 2;
+    if (lotPlace.lot && lotPlace.lot.spots.length > 5) {
+      const s = lotPlace.lot.spots[5];
+      x = s.x; y = s.y; angle = s.angle;
+    }
+    const car = {
+      kind: 'job', driver: null, x, y, angle,
+      speed: 0, health: CAR.health, color: '#22d3ee',
+      axis: null, road: 0, dir: 1, turnCd: 0, stuckT: 0, reverseT: 0, copOut: false,
+    };
+    world.cars.push(car);
+    world.jobCar = car;
+    return car;
+  }
+
+  // Which car a steal/deliver step is about: the story coupe by default,
+  // the job car when the step says so.
+  function targetCarForStep(step) {
+    return step && step.car === 'job' ? world.jobCar : world.missionCar;
   }
 
   function spawnPed(x, y, dealer = false) {
@@ -327,6 +389,10 @@ export function createWorld(seed = 1) {
       }
       world.toast('Three dealers are working the beach');
     }
+    if (step.onStart === 'spawnJobCar') {
+      spawnJobCar();
+      world.toast('The cyan racer is on the Bay Motors lot');
+    }
   }
 
   function completeStep(audio) {
@@ -358,9 +424,9 @@ export function createWorld(seed = 1) {
     if (!m) return;
     world.money += m.def.reward;
     world.stats.missions += 1;
-    if (m.index === 0 && !player.hasGun) {
-      player.hasGun = true;
-      world.toast('Lucho left you a pistol — mouse to aim, click to fire');
+    if (m.index === 0 && !player.weapons.pistol) {
+      grantWeapon('pistol');
+      world.toast('Lucho left you a pistol — keys 1-4 or Q to switch weapons');
     }
     if (m.index === 1) world.carrying = false;
     showBanner('Mission complete', `${m.def.title} — +$${m.def.reward}`, 3.8);
@@ -390,7 +456,10 @@ export function createWorld(seed = 1) {
     if (!step) return null;
     switch (step.type) {
       case 'goto': case 'pickup': case 'channel': return placePoint(step.place);
-      case 'steal': return world.missionCar ? { x: world.missionCar.x, y: world.missionCar.y } : null;
+      case 'steal': {
+        const car = targetCarForStep(step);
+        return car ? { x: car.x, y: car.y } : null;
+      }
       case 'deliverCar': return placePoint(step.place);
       case 'kill': {
         let best = null, bd = Infinity;
@@ -415,6 +484,8 @@ export function createWorld(seed = 1) {
     missionIndex: world.mission ? world.mission.index : MISSIONS.length,
     storyDone: world.storyDone,
     hasGun: !!player.hasGun,
+    weapons: { ...player.weapons },
+    weapon: player.weapon,
     x: Math.round(player.x), y: Math.round(player.y),
     health: Math.round(player.health),
     timeHours: Math.round(world.timeHours * 100) / 100,
@@ -426,7 +497,14 @@ export function createWorld(seed = 1) {
     world.money = data.money | 0;
     world.heat = 0;
     world.carrying = false;
-    player.hasGun = !!data.hasGun;
+    player.weapons = { pistol: false, smg: false, shotgun: false, ...(data.weapons || {}) };
+    // Saves from before the armoury only know hasGun: that meant a pistol.
+    if (data.hasGun && !player.weapons.pistol && !player.weapons.smg && !player.weapons.shotgun) {
+      player.weapons.pistol = true;
+    }
+    player.hasGun = !!(player.weapons.pistol || player.weapons.smg || player.weapons.shotgun);
+    player.weapon = ['pistol', 'smg', 'shotgun'].includes(data.weapon) && player.weapons[data.weapon]
+      ? data.weapon : (player.hasGun ? 'pistol' : 'fists');
     player.health = clamp(data.health || 100, 1, PLAYER.health);
     player.car = null;
     const p = { x: data.x || player.x, y: data.y || player.y };
@@ -437,6 +515,11 @@ export function createWorld(seed = 1) {
     world.storyDone = !!data.storyDone;
     startMission(clamp(data.missionIndex | 0, 0, MISSIONS.length));
     if (world.storyDone) world.mission = null;
+    // A save taken mid-Night-Run must find its racer waiting on the lot.
+    const step = world.mission && world.mission.def.steps[world.mission.stepIndex];
+    if (step && (step.type === 'steal' || step.type === 'deliverCar') && step.car === 'job' && !world.jobCar) {
+      spawnJobCar();
+    }
   };
 
   // ---------- entering / leaving cars ----------
@@ -492,72 +575,255 @@ export function createWorld(seed = 1) {
     player.car = null;
   }
 
+  // ---------- places: the working city ----------
+  // Every named place does something real when the player walks up and
+  // presses E: the clinic heals, the desk sergeant takes bribes, the hotel
+  // rents rest and a save, the market sells guns and snacks, Bay Motors
+  // sells cars, Taller Sol repairs them, the safehouse saves, and the bank
+  // can be hit again in free roam once its vault refills.
+
+  const PLACE_KEYS = ['hotel', 'bank', 'clinic', 'policeStation', 'hideout', 'market', 'carLot', 'garage'];
+
+  function nearestPlace(maxD = 100) {
+    let best = null, bd = maxD;
+    for (const key of PLACE_KEYS) {
+      const p = city.places[key];
+      if (!p) continue;
+      const d = dist(player.x, player.y, p.x, p.y);
+      if (d < bd) { bd = d; best = key; }
+    }
+    return best;
+  }
+
+  world.promptText = () => {
+    if (player.car || world.fate) return '';
+    if (nearestEnterableCar()) return '';
+    const key = nearestPlace();
+    if (!key) return '';
+    switch (key) {
+      case 'clinic': return player.health < PLAYER.health ? `E — Clinica Vida: full heal $${PRICES.clinicHeal}` : 'Clinica Vida — you feel fine';
+      case 'policeStation': return world.heat > 0 ? `E — Bribe the desk sergeant: clear heat $${PRICES.policeBribe}` : 'Police station — nothing to clear';
+      case 'hotel': return `E — Hotel Lumina: room, rest + save $${PRICES.hotelRoom}`;
+      case 'hideout': return 'E — Safehouse: save + lie low';
+      case 'market': return !player.weapons.smg ? `E — Market Sol: SMG $${PRICES.smg}` : !player.weapons.shotgun ? `E — Market Sol: shotgun $${PRICES.shotgun}` : `E — Market Sol: snack $${PRICES.snack} (+health)`;
+      case 'carLot': return world.ownedCar ? 'Bay Motors — your car is on the lot' : `E — Bay Motors: buy the blue racer $${PRICES.car}`;
+      case 'garage': return `E — Taller Sol: full repair $${PRICES.repair}`;
+      case 'bank': return world.elapsed >= world.bankReadyAt ? `E — Banco del Mar: hit the side vault (+$${PRICES.bankHeist})` : 'Banco del Mar — the vault is empty for now';
+      default: return '';
+    }
+  };
+
+  function tryPlaceInteract(audio) {
+    const key = nearestPlace();
+    if (!key) return;
+    const pay = (amount) => {
+      const cost = Math.min(amount, world.money);
+      world.money -= cost;
+      return cost;
+    };
+    switch (key) {
+      case 'clinic': {
+        if (player.health >= PLAYER.health) { world.toast('You feel fine'); return; }
+        const cost = pay(PRICES.clinicHeal);
+        player.health = PLAYER.health;
+        world.toast(cost > 0 ? `Patched up — $${cost}` : 'Patched up — on the house');
+        sfx(audio, 'pickup');
+        return;
+      }
+      case 'policeStation': {
+        if (world.heat <= 0) { world.toast('Nothing to clear'); return; }
+        const cost = pay(PRICES.policeBribe);
+        world.heat = 0;
+        world.unseenFor = 99;
+        world.toast(cost > 0 ? `The sergeant looks away — $${cost}` : 'The sergeant shrugs — walk free');
+        return;
+      }
+      case 'hotel': {
+        if (world.money < PRICES.hotelRoom) { world.toast(`Rooms are $${PRICES.hotelRoom}`); return; }
+        world.money -= PRICES.hotelRoom;
+        world.timeHours = (world.timeHours + 7) % 24;
+        player.health = PLAYER.health;
+        if (typeof world.onSaveRequest === 'function') world.onSaveRequest();
+        world.toast('You rest at Hotel Lumina — game saved');
+        return;
+      }
+      case 'hideout': {
+        if (typeof world.onSaveRequest === 'function') world.onSaveRequest();
+        world.unseenFor = Math.max(world.unseenFor, 10);
+        world.toast('Saved at the safehouse — you lie low');
+        return;
+      }
+      case 'market': {
+        if (!player.weapons.smg) {
+          if (world.money < PRICES.smg) { world.toast(`SMG is $${PRICES.smg} — snacks $${PRICES.snack}`); return; }
+          world.money -= PRICES.smg;
+          grantWeapon('smg');
+          world.toast('Bought the SMG — key 3 or Q');
+          sfx(audio, 'cash');
+          return;
+        }
+        if (!player.weapons.shotgun) {
+          if (world.money < PRICES.shotgun) { world.toast(`Shotgun is $${PRICES.shotgun}`); return; }
+          world.money -= PRICES.shotgun;
+          grantWeapon('shotgun');
+          world.toast('Bought the shotgun — key 4 or Q');
+          sfx(audio, 'cash');
+          return;
+        }
+        if (player.health < PLAYER.health && world.money >= PRICES.snack) {
+          world.money -= PRICES.snack;
+          player.health = Math.min(PLAYER.health, player.health + 35);
+          world.toast('Street snack — you feel better');
+          sfx(audio, 'pickup');
+          return;
+        }
+        world.toast('Market Sol — fully stocked, fully armed');
+        return;
+      }
+      case 'carLot': {
+        if (world.ownedCar && world.cars.includes(world.ownedCar)) { world.toast('Your racer is right here'); return; }
+        if (world.money < PRICES.car) { world.toast(`The blue racer is $${PRICES.car}`); return; }
+        world.money -= PRICES.car;
+        const lot = city.places.carLot;
+        const car = {
+          kind: 'owned', driver: null, x: lot.x + 40, y: lot.y + 46, angle: Math.PI / 2,
+          speed: 0, health: CAR.health, color: '#3a86ff',
+          axis: null, road: 0, dir: 1, turnCd: 0, stuckT: 0, reverseT: 0, copOut: false,
+        };
+        world.cars.push(car);
+        world.ownedCar = car;
+        world.toast('She is yours — the blue racer from Bay Motors');
+        sfx(audio, 'cash');
+        return;
+      }
+      case 'garage': {
+        let best = null, bd = 130;
+        for (const car of world.cars) {
+          if (car.driver === 'traffic' || car.kind === 'police') continue;
+          const d = dist(player.x, player.y, car.x, car.y);
+          if (d < bd) { bd = d; best = car; }
+        }
+        if (!best) { world.toast('Bring a car to Taller Sol'); return; }
+        if (best.health >= CAR.health) { world.toast('That one is already mint'); return; }
+        const cost = pay(PRICES.repair);
+        best.health = CAR.health;
+        world.toast(cost > 0 ? `Good as new — $${cost}` : 'Good as new — on the tab');
+        sfx(audio, 'pickup');
+        return;
+      }
+      case 'bank': {
+        if (world.mission && !world.storyDone) { world.toast('The bank job is a mission — follow the gold pillar'); return; }
+        if (world.elapsed < world.bankReadyAt) { world.toast('The vault is empty — come back later'); return; }
+        world.channelAction = { type: 'bank', t: 0, need: 3, x: player.x, y: player.y };
+        world.toast('Working the side vault — hold still');
+        return;
+      }
+      default: return;
+    }
+  }
+
+  // The free-roam bank job: stand at the vault for three seconds.
+  function updateChannelAction(dt, audio) {
+    const ca = world.channelAction;
+    if (!ca) return;
+    if (player.car || dist(player.x, player.y, ca.x, ca.y) > 26 || world.fate) {
+      world.channelAction = null;
+      world.toast('You broke off the vault job');
+      return;
+    }
+    ca.t += dt;
+    if (ca.t >= ca.need) {
+      world.channelAction = null;
+      world.bankReadyAt = world.elapsed + 240;
+      world.money += PRICES.bankHeist;
+      world.crime(330, player.x, player.y);
+      world.toast(`+$${PRICES.bankHeist} — the alarm is screaming`);
+      sfx(audio, 'cash');
+    }
+  }
+
   // ---------- combat ----------
 
+  // One pellet of one trigger pull: resolve the nearest thing along the ray
+  // and hurt it. Returns what was hit so the caller can charge the crime
+  // once per pull, not once per pellet.
+  function fireOne(w, a, x0, y0) {
+    let bestT = 1;
+    let hitPed = null, hitCop = null, hitCar = null;
+    const consider = (tx, ty, r) => {
+      const dx = tx - x0, dy = ty - y0;
+      const t = (dx * Math.cos(a) + dy * Math.sin(a)) / w.range;
+      if (t < 0 || t > bestT) return -1;
+      const px = x0 + Math.cos(a) * w.range * t;
+      const py = y0 + Math.sin(a) * w.range * t;
+      if (dist(px, py, tx, ty) > r + 6) return -1;
+      if (!lineOfSight(city, x0, y0, tx, ty)) return -1;
+      return t;
+    };
+    for (const ped of world.peds) {
+      if (ped.dead) continue;
+      const t = consider(ped.x, ped.y, 13);
+      if (t >= 0) { bestT = t; hitPed = ped; hitCop = null; hitCar = null; }
+    }
+    for (const cop of world.cops) {
+      if (cop.dead) continue;
+      const t = consider(cop.x, cop.y, 13);
+      if (t >= 0) { bestT = t; hitCop = cop; hitPed = null; hitCar = null; }
+    }
+    for (const car of world.cars) {
+      if (car === player.car) continue;
+      const t = consider(car.x, car.y, 40);
+      if (t >= 0) { bestT = t; hitCar = car; hitPed = null; hitCop = null; }
+    }
+    const hx = x0 + Math.cos(a) * w.range * bestT;
+    const hy = y0 + Math.sin(a) * w.range * bestT;
+    world.tracers.push({ x0, y0, x1: hx, y1: hy, ttl: 0.07, maxT: 0.07 });
+    burst(hx, hy, '#ffd166', 3, 90);
+    if (hitPed) {
+      hitPed.hp -= w.damage;
+      hitPed.state = 'flee'; hitPed.fleeT = 2.5; hitPed.fleeX = player.x; hitPed.fleeY = player.y;
+      if (hitPed.hp <= 0) killPed(hitPed, true);
+      return 'ped';
+    }
+    if (hitCop) {
+      hitCop.hp -= w.damage;
+      if (hitCop.hp <= 0) killCop(hitCop, true);
+      return 'cop';
+    }
+    if (hitCar) {
+      hitCar.health -= w.damage * 0.5;
+      return hitCar.kind === 'police' ? 'cop' : 'car';
+    }
+    return null;
+  }
+
   function playerAttack(audio) {
-    if (player.hasGun && player.shootCd <= 0) {
-      player.shootCd = GUN.cooldown;
+    const w = WEAPONS[player.weapon];
+    if (w && player.weapons[player.weapon] && player.shootCd <= 0) {
+      player.shootCd = w.cooldown;
       world.stats.shotsFired += 1;
       sfx(audio, 'shot');
-      const a = player.angle + R.range(-GUN.spread, GUN.spread);
       const x0 = player.x + Math.cos(player.angle) * 18;
       const y0 = player.y + Math.sin(player.angle) * 18;
-      world.muzzle = { x: x0, y: y0, angle: a, ttl: 0.055, maxT: 0.055 };
-      let hx = x0 + Math.cos(a) * GUN.range;
-      let hy = y0 + Math.sin(a) * GUN.range;
-      let bestT = 1;
-      let hitPed = null, hitCop = null, hitCar = null;
-      const consider = (tx, ty, r) => {
-        const dx = tx - x0, dy = ty - y0;
-        const t = (dx * Math.cos(a) + dy * Math.sin(a)) / GUN.range;
-        if (t < 0 || t > bestT) return -1;
-        const px = x0 + Math.cos(a) * GUN.range * t;
-        const py = y0 + Math.sin(a) * GUN.range * t;
-        if (dist(px, py, tx, ty) > r + 6) return -1;
-        if (!lineOfSight(city, x0, y0, tx, ty)) return -1;
-        return t;
-      };
-      for (const ped of world.peds) {
-        if (ped.dead) continue;
-        const t = consider(ped.x, ped.y, 13);
-        if (t >= 0) { bestT = t; hitPed = ped; hitCop = null; hitCar = null; }
+      world.muzzle = { x: x0, y: y0, angle: player.angle, ttl: 0.055, maxT: 0.055 };
+      let worst = null;
+      for (let p = 0; p < w.pellets; p += 1) {
+        const a = player.angle + R.range(-w.spread, w.spread);
+        const hit = fireOne(w, a, x0, y0);
+        if (hit === 'cop') worst = 'cop';
+        else if (hit === 'ped' && worst !== 'cop') worst = 'ped';
+        else if (hit === 'car' && !worst) worst = 'car';
       }
-      for (const cop of world.cops) {
-        if (cop.dead) continue;
-        const t = consider(cop.x, cop.y, 13);
-        if (t >= 0) { bestT = t; hitCop = cop; hitPed = null; hitCar = null; }
-      }
-      for (const car of world.cars) {
-        if (car === player.car) continue;
-        const t = consider(car.x, car.y, 40);
-        if (t >= 0) { bestT = t; hitCar = car; hitPed = null; hitCop = null; }
-      }
-      hx = x0 + Math.cos(a) * GUN.range * bestT;
-      hy = y0 + Math.sin(a) * GUN.range * bestT;
-      world.tracers.push({ x0, y0, x1: hx, y1: hy, ttl: 0.07, maxT: 0.07 });
-      burst(hx, hy, '#ffd166', 3, 90);
-      if (hitPed) {
-        hitPed.hp -= GUN.damage;
-        hitPed.state = 'flee'; hitPed.fleeT = 2.5; hitPed.fleeX = player.x; hitPed.fleeY = player.y;
-        world.crime(WANTED.shootAt, hitPed.x, hitPed.y);
-        if (hitPed.hp <= 0) killPed(hitPed, true);
-      } else if (hitCop) {
-        hitCop.hp -= GUN.damage;
-        world.crime(WANTED.hitCop, hitCop.x, hitCop.y);
-        if (hitCop.hp <= 0) killCop(hitCop, true);
-      } else if (hitCar) {
-        hitCar.health -= GUN.damage * 0.5;
-        if (hitCar.kind === 'police') world.crime(WANTED.hitCop, hitCar.x, hitCar.y);
-      } else if (witnessed(x0, y0, 320)) {
-        world.crime(Math.round(WANTED.shootAt * 0.5), x0, y0);
-      }
+      if (worst === 'cop') world.crime(WANTED.hitCop, player.x, player.y);
+      else if (worst === 'ped') world.crime(WANTED.shootAt, player.x, player.y);
+      else if (!worst && witnessed(x0, y0, 320)) world.crime(Math.round(WANTED.shootAt * 0.5), x0, y0);
       // Gunfire panics nearby civilians.
       for (const ped of world.peds) {
         if (!ped.dead && !ped.dealer && dist(ped.x, ped.y, player.x, player.y) < 260) {
           ped.state = 'flee'; ped.fleeT = Math.max(ped.fleeT, 2); ped.fleeX = player.x; ped.fleeY = player.y;
         }
       }
-    } else if (!player.hasGun && player.punchCd <= 0) {
+    } else if (player.weapon === 'fists' && player.punchCd <= 0) {
       player.punchCd = PLAYER.punchCooldown;
       sfx(audio, 'punch');
       const reach = PLAYER.punchRange;
@@ -608,6 +874,7 @@ export function createWorld(seed = 1) {
       angle: Math.atan2(player.y - at.y, player.x - at.x),
       speed: 0, health: CAR.health * 1.4, color: '#e8eaf2',
       axis: null, road: 0, dir: 1, turnCd: 0, stuckT: 0, reverseT: 0, copOut: false,
+      flank: (world.cars.filter((c) => c.kind === 'police').length % 3) - 1,
     };
     world.cars.push(car);
     return car;
@@ -660,6 +927,16 @@ export function createWorld(seed = 1) {
     if (player.car) {
       tx += Math.cos(player.car.angle) * player.car.speed * 0.35;
       ty += Math.sin(player.car.angle) * player.car.speed * 0.35;
+    }
+    // Encirclement: close in, each unit takes a different shoulder of the
+    // player's heading, so a chase becomes a closing net, not a conga line.
+    if (d < 430) {
+      const flank = car.flank || 0;
+      const heading = player.car ? player.car.angle : player.angle;
+      tx += Math.cos(heading + Math.PI / 2) * flank * 120;
+      ty += Math.sin(heading + Math.PI / 2) * flank * 120;
+      tx += Math.cos(heading) * (flank === 0 ? -60 : 30);
+      ty += Math.sin(heading) * (flank === 0 ? -60 : 30);
     }
     const want = Math.atan2(ty - car.y, tx - car.x);
     if (car.reverseT > 0) {
@@ -924,6 +1201,7 @@ export function createWorld(seed = 1) {
       else {
         const car = nearestEnterableCar();
         if (car) enterCar(car, audio);
+        else tryPlaceInteract(audio);
       }
     }
 
@@ -1041,11 +1319,11 @@ export function createWorld(seed = 1) {
         break;
       }
       case 'steal':
-        if (player.car && player.car === world.missionCar) completeStep(audio);
+        if (player.car && player.car === targetCarForStep(step)) completeStep(audio);
         break;
       case 'deliverCar': {
         const t = placePoint(step.place);
-        if (player.car === world.missionCar && dist(px, py, t.x, t.y) < (step.radius || 120)) completeStep(audio);
+        if (player.car === targetCarForStep(step) && dist(px, py, t.x, t.y) < (step.radius || 120)) completeStep(audio);
         break;
       }
       case 'pickup': {
@@ -1122,6 +1400,8 @@ export function createWorld(seed = 1) {
     }
 
     updatePlayer(dt, ctl, audio);
+    updateChannelAction(dt, audio);
+    world.stats.timePlayed += dt;
 
     for (const car of world.cars) {
       car.crimeCd = Math.max(0, (car.crimeCd || 0) - dt);

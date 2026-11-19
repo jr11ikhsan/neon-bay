@@ -1,4 +1,4 @@
-// The NEON BAY story: four missions in a fixed order, each a short chain of steps.
+// The NEON BAY story: six missions in a fixed order, each a short chain of steps.
 // The world runs the steps generically by `type`; this file is only the script —
 // who, where, what the player is told, and what it pays. Places come from the city.
 
@@ -44,6 +44,30 @@ export const MISSIONS = [
       { type: 'goto', place: 'bank', text: 'Go to Banco del Mar', radius: 70 },
       { type: 'channel', place: 'bank', text: 'Grab the cash bag', radius: 46, seconds: 3, onStart: 'bankHeat' },
       { type: 'goto', place: 'hideout', text: 'Escape to Taller Sol', radius: 110 },
+    ],
+  },
+  {
+    id: 'night-run',
+    title: 'Mission 5 — Night Run',
+    intro: 'A buyer at Hotel Lumina wants the cyan racer on the Bay Motors lot — tonight, no questions. Take it, deliver it, vanish.',
+    reward: 900,
+    steps: [
+      { type: 'goto', place: 'carLot', text: 'Go to the Bay Motors lot', radius: 110 },
+      { type: 'steal', car: 'job', text: 'Steal the cyan racer', radius: 0, onStart: 'spawnJobCar' },
+      { type: 'deliverCar', car: 'job', place: 'hotel', text: 'Deliver the racer to Hotel Lumina', radius: 120 },
+      { type: 'escape', text: 'Lose your wanted level', onStart: 'none' },
+    ],
+  },
+  {
+    id: 'bay-legend',
+    title: 'Mission 6 — Bay Legend',
+    intro: 'One last score. Banco del Mar after dark, everything in the side vault — then sell the story at Bay Motors and disappear. Become the legend of Neon Bay.',
+    reward: 2500,
+    steps: [
+      { type: 'goto', place: 'bank', text: 'Go to Banco del Mar', radius: 70 },
+      { type: 'channel', place: 'bank', text: 'Empty the side vault', radius: 46, seconds: 4, onStart: 'bankHeat' },
+      { type: 'goto', place: 'carLot', text: 'Meet the buyer at Bay Motors', radius: 110 },
+      { type: 'escape', text: 'Lose your wanted level', onStart: 'none' },
     ],
   },
 ];

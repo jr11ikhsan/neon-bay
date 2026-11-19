@@ -10,7 +10,7 @@ import { createInput, ACTION_CONFIRM, ACTION_PAUSE, ACTION_INTERACT } from './in
 import { createAudio } from './audio.js';
 import { createWorld } from './world.js';
 import { createRenderer } from './render.js';
-import { setupShot, shotControls, SHOT_STEP_SECONDS } from './shots.js';
+import { setupShot, shotControls, finalizeShot, SHOT_STEP_SECONDS } from './shots.js';
 
 const canvas = document.getElementById('game');
 const renderer = createRenderer(document.getElementById('gl'), canvas);
@@ -35,6 +35,7 @@ let screen = 'title';
 
 function wireWorld(w) {
   w.onMissionComplete = () => saveGame();
+  w.onSaveRequest = () => saveGame();
   return w;
 }
 
@@ -73,6 +74,13 @@ newWorld();
 // Menu keys that input.js does not turn into actions.
 window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyM') audio.toggleMute();
+  if (screen === 'playing' && !event.repeat) {
+    if (event.code === 'Digit1') world.setWeapon('fists');
+    else if (event.code === 'Digit2') world.setWeapon('pistol');
+    else if (event.code === 'Digit3') world.setWeapon('smg');
+    else if (event.code === 'Digit4') world.setWeapon('shotgun');
+    else if (event.code === 'KeyQ') world.cycleWeapon();
+  }
   if (screen === 'title' && event.code === 'KeyC' && hasSave()) {
     if (loadGame()) { audio.unlock(); screen = 'playing'; }
   } else if (screen === 'paused' && event.code === 'KeyS') {
@@ -139,6 +147,7 @@ if (shotName) {
   for (let i = 0; i < steps; i += 1) {
     world.update(STEP, shotControls(shotName, world), silentAudio);
   }
+  finalizeShot(world, shotName); // compose the money frame deterministically
   renderer.render(world, screen, { hasSave: false, muted: true, pointer: null });
   requestAnimationFrame(() => {
     renderer.render(world, screen, { hasSave: false, muted: true, pointer: null });
