@@ -158,10 +158,63 @@ export function createRenderer(glCanvas, hudCanvas) {
   sunSprite.scale.set(560, 560, 1);
   scene.add(sunSprite);
 
+  // The sky itself: a gradient dome (deep violet up top melting through
+  // magenta into amber at the horizon) that follows the camera, so every
+  // screenshot opens onto a tropical dusk instead of a flat colour.
+  const skyDome = (() => {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 512;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 0, 512);
+    grad.addColorStop(0, '#1d1440');
+    grad.addColorStop(0.38, '#4b2560');
+    grad.addColorStop(0.55, '#8a3468');
+    grad.addColorStop(0.68, '#e0574f');
+    grad.addColorStop(0.78, '#ff9a3c');
+    grad.addColorStop(0.86, '#5a2c50');
+    grad.addColorStop(1, '#140f2a');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 4, 512);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(2450, 24, 14),
+      new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }),
+    );
+    dome.renderOrder = -10;
+    scene.add(dome);
+    return dome;
+  })();
+
+  // Slow pink clouds drifting over the bay.
+  const cloudSprites = [];
+  for (let i = 0; i < 9; i += 1) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTex, color: i % 2 ? 0xff9db0 : 0xffc4a3, transparent: true,
+      opacity: 0.13, fog: false, depthWrite: false,
+    }));
+    const scale = 380 + hashOf(i * 17 + 3) * 340;
+    s.scale.set(scale, scale * 0.36, 1);
+    s.userData = {
+      bx: hashOf(i * 29 + 5) * WORLD.width,
+      y: 300 + hashOf(i * 41 + 7) * 190,
+      bz: hashOf(i * 53 + 11) * WORLD.height,
+      drift: 3 + hashOf(i * 67 + 13) * 5,
+    };
+    scene.add(s);
+    cloudSprites.push(s);
+  }
+
   let builtCity = null;
   let lampGlows = [];
   let waterMat = null;
-  let foamMesh = null;
+  let foamMeshes = [];
+  let glintMesh = null;
+  let waterStreaks = [];
+  let signGlows = [];
+  let trafficMats = null;
+  let frondInstRef = null;
+  let cityPalmsRef = [];
 
   const lambert = (color, opts = {}) => new THREE.MeshLambertMaterial({ color, ...opts });
   function box(w, h, d, mat, x, y, z, parent) {
@@ -229,11 +282,13 @@ export function createRenderer(glCanvas, hudCanvas) {
     const asphaltTexH = new THREE.CanvasTexture(asphaltCanvasH);
     asphaltTexH.wrapS = asphaltTexH.wrapT = THREE.RepeatWrapping;
     asphaltTexH.repeat.set(38, 1);
+    // Phong asphalt: the low sun and the lamps lay a wet-looking sheen
+    // along the streets — the cheapest convincing "wet road" there is.
     for (const r of city.roadsV) {
-      plane(ROADS.width, WORLD.height, new THREE.MeshLambertMaterial({ map: asphaltTexV }), r.x, 0.045, WORLD.height / 2, root).receiveShadow = true;
+      plane(ROADS.width, WORLD.height, new THREE.MeshPhongMaterial({ map: asphaltTexV, shininess: 42, specular: 0x39506b }), r.x, 0.045, WORLD.height / 2, root).receiveShadow = true;
     }
     for (const r of city.roadsH) {
-      const p = plane(WORLD.width, ROADS.width, new THREE.MeshLambertMaterial({ map: asphaltTexH }), WORLD.width / 2, 0.045, r.y, root);
+      const p = plane(WORLD.width, ROADS.width, new THREE.MeshPhongMaterial({ map: asphaltTexH, shininess: 42, specular: 0x39506b }), WORLD.width / 2, 0.045, r.y, root);
       p.receiveShadow = true;
     }
 
@@ -266,10 +321,49 @@ export function createRenderer(glCanvas, hudCanvas) {
       const sea = plane(WORLD.width - WORLD.waterX + 700, WORLD.height, waterMat, (WORLD.waterX + WORLD.width + 700) / 2, 0.09, WORLD.height / 2, root);
       sea.position.x = WORLD.waterX + (WORLD.width - WORLD.waterX + 700) / 2;
     }
-    foamMesh = plane(7, WORLD.height, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }), WORLD.waterX + 3, 0.12, WORLD.height / 2, root);
+    foamMeshes = [];
+    for (let fi = 0; fi < 3; fi += 1) {
+      const foam = plane(6 - fi, WORLD.height, new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.5 - fi * 0.13, depthWrite: false,
+      }), WORLD.waterX + 3 + fi * 17, 0.12, WORLD.height / 2, root);
+      foam.userData.phase = fi * 1.4;
+      foamMeshes.push(foam);
+    }
+    // The sun's glitter path on the water, plus neon streaks after dark.
+    {
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 8;
+      const g = c.getContext('2d');
+      const grad = g.createLinearGradient(0, 0, 128, 0);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(0.5, 'rgba(255,255,255,0.85)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 128, 8);
+      const tex = new THREE.CanvasTexture(c);
+      glintMesh = plane(430, WORLD.height * 0.92, new THREE.MeshBasicMaterial({
+        map: tex, color: 0xffb35c, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }), WORLD.waterX + 300, 0.16, WORLD.height / 2, root);
+    }
+    waterStreaks = [];
+    {
+      const neon = [0xff2e88, 0x22d3ee, 0xffb703, 0x06d6a0, 0xc77dff, 0xff7b54, 0xff2e88];
+      for (let i = 0; i < neon.length; i += 1) {
+        const streak = plane(22, 120 + (i % 3) * 40, new THREE.MeshBasicMaterial({
+          color: neon[i], transparent: true, opacity: 0,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        }), WORLD.waterX + 42 + i * 34, 0.15, 420 + i * 430, root);
+        streak.userData = { baseX: WORLD.waterX + 42 + i * 34, phase: i * 1.7 };
+        waterStreaks.push(streak);
+      }
+    }
 
     // Buildings: textured boxes with roofs.
     const roofMat = lambert(0x23232e);
+    signGlows = [];
+    const roofAC = [];
+    const roofTowers = [];
     city.buildings.forEach((b, i) => {
       const height = 30 + hashOf(i * 31 + 7) * 95;
       const tex = makeFacadeTexture(b, i);
@@ -282,7 +376,53 @@ export function createRenderer(glCanvas, hudCanvas) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       root.add(mesh);
+      // A soft halo around each neon sign once the light drops.
+      if (b.sign) {
+        const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: glowTex, color: new THREE.Color(b.sign.color), transparent: true,
+          opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending,
+        }));
+        glow.scale.set(Math.max(90, b.w * 1.1), 54, 1);
+        glow.position.set(b.x + b.w / 2, height * 0.8, b.y + b.h / 2);
+        root.add(glow);
+        signGlows.push(glow);
+      }
+      // Rooftop clutter for the skyline: AC boxes on most roofs, the odd
+      // water tower on the taller blocks.
+      const h1 = hashOf(i * 43 + 3);
+      if (h1 < 0.6) {
+        roofAC.push({
+          x: b.x + b.w * (0.22 + h1 * 0.7), y: height, z: b.y + b.h * (0.25 + hashOf(i * 59 + 9) * 0.5),
+          s: 0.8 + hashOf(i * 71 + 1) * 0.7,
+        });
+      }
+      if (height > 88 && hashOf(i * 83 + 5) < 0.4) {
+        roofTowers.push({ x: b.x + b.w * 0.7, y: height, z: b.y + b.h * 0.3 });
+      }
     });
+    {
+      const dummy = new THREE.Object3D();
+      const acInst = new THREE.InstancedMesh(new THREE.BoxGeometry(17, 8, 13), lambert(0x596270), Math.max(1, roofAC.length));
+      roofAC.forEach((r, i) => {
+        dummy.position.set(r.x, r.y + 4, r.z);
+        dummy.rotation.set(0, hashOf(i * 13) * 0.8, 0);
+        dummy.scale.setScalar(r.s);
+        dummy.updateMatrix();
+        acInst.setMatrixAt(i, dummy.matrix);
+      });
+      acInst.count = roofAC.length;
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.setScalar(1);
+      root.add(acInst);
+      const towerInst = new THREE.InstancedMesh(new THREE.CylinderGeometry(8, 8, 13, 8), lambert(0x6e5136), Math.max(1, roofTowers.length));
+      roofTowers.forEach((r, i) => {
+        dummy.position.set(r.x, r.y + 6.5, r.z);
+        dummy.updateMatrix();
+        towerInst.setMatrixAt(i, dummy.matrix);
+      });
+      towerInst.count = roofTowers.length;
+      root.add(towerInst);
+    }
 
     // Palms, lamps and props are instanced: hundreds of near-identical
     // objects must cost a handful of draw calls, not hundreds.
@@ -310,6 +450,8 @@ export function createRenderer(glCanvas, hudCanvas) {
     trunkInst.castShadow = true;
     root.add(trunkInst);
     root.add(frondInst);
+    frondInstRef = frondInst;
+    cityPalmsRef = city.palms;
 
     const poleInst = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.9, 1.2, 24, 5), lambert(0x2c2c34), city.lamps.length,
@@ -356,6 +498,44 @@ export function createRenderer(glCanvas, hudCanvas) {
     barrelInst.count = barrels.length;
     barrelInst.castShadow = true;
     root.add(barrelInst);
+
+    // Traffic lights on every intersection: instanced poles and heads, with
+    // one signal dot per head whose colour follows the two-phase cycle.
+    {
+      const n = city.intersections.length;
+      const poleInst = new THREE.InstancedMesh(new THREE.CylinderGeometry(1.1, 1.4, 30, 5), lambert(0x22222a), Math.max(1, n));
+      const headInst = new THREE.InstancedMesh(new THREE.BoxGeometry(6, 15, 6), lambert(0x14141a), Math.max(1, n));
+      trafficMats = {
+        ns: new THREE.MeshBasicMaterial({ color: 0x2eff7b }),
+        ew: new THREE.MeshBasicMaterial({ color: 0xff4040 }),
+      };
+      const dotNS = new THREE.InstancedMesh(new THREE.SphereGeometry(2.7, 8, 6), trafficMats.ns, Math.max(1, n));
+      const dotEW = new THREE.InstancedMesh(new THREE.SphereGeometry(2.7, 8, 6), trafficMats.ew, Math.max(1, n));
+      let nsCount = 0, ewCount = 0;
+      city.intersections.forEach((pt, i) => {
+        const px = pt.x + ROADS.width / 2 + 10;
+        const pz = pt.y + ROADS.width / 2 + 10;
+        dummy.position.set(px, 15, pz);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        poleInst.setMatrixAt(i, dummy.matrix);
+        dummy.position.set(px, 33, pz);
+        dummy.updateMatrix();
+        headInst.setMatrixAt(i, dummy.matrix);
+        dummy.position.set(px, 36, pz);
+        dummy.updateMatrix();
+        if (i % 2 === 0) { dotNS.setMatrixAt(nsCount, dummy.matrix); nsCount += 1; }
+        else { dotEW.setMatrixAt(ewCount, dummy.matrix); ewCount += 1; }
+      });
+      poleInst.count = n;
+      headInst.count = n;
+      dotNS.count = nsCount;
+      dotEW.count = ewCount;
+      root.add(poleInst);
+      root.add(headInst);
+      root.add(dotNS);
+      root.add(dotEW);
+    }
     return root;
   }
 
@@ -368,12 +548,41 @@ export function createRenderer(glCanvas, hudCanvas) {
 
   function makeCarMesh(car) {
     const g = new THREE.Group();
-    const bodyMat = lambert(new THREE.Color(car.color).getHex());
-    const body = box(84, 15, 42, bodyMat, 0, 12, 0, g);
+    // Vehicle variety: the same traffic stream reads as sedans, taxis, vans,
+    // pickups and sports cars depending on a stable per-car hash.
+    let type = 'sedan';
+    if (car.kind === 'police') type = 'police';
+    else if (car.kind === 'mission') type = 'sport';
+    else {
+      const hv = hashOf(Math.round(car.x) * 31 + Math.round(car.y) * 7 + car.color.length * 131);
+      if (hv < 0.16) type = 'taxi';
+      else if (hv < 0.36) type = 'van';
+      else if (hv < 0.54) type = 'pickup';
+      else if (hv < 0.7) type = 'sport';
+    }
+    const paintHex = type === 'taxi' ? 0xffc21c : new THREE.Color(car.color).getHex();
+    const bodyMat = lambert(paintHex);
+    let body;
+    if (type === 'van') {
+      body = box(88, 27, 44, bodyMat, 0, 17.5, 0, g);
+      box(30, 10, 40, lambert(0x14161f), 30, 12, 0, g); // windshield slope block
+    } else if (type === 'pickup') {
+      body = box(86, 13, 43, bodyMat, 0, 11, 0, g);
+      box(40, 9, 43, lambert(0x2a2d38), -24, 19, 0, g); // open bed
+      box(36, 12, 40, lambert(0x14161f), 18, 22, 0, g); // cab
+    } else if (type === 'sport') {
+      body = box(86, 11, 44, bodyMat, 0, 9.5, 0, g);
+      box(40, 9, 36, lambert(0x14161f), -4, 17, 0, g);
+      box(5, 3, 42, bodyMat, -42, 19, 0, g); // spoiler
+    } else {
+      body = box(84, 15, 42, bodyMat, 0, 12, 0, g);
+      box(44, 12, 38, lambert(0x14161f), -3, 24, 0, g);
+    }
     body.castShadow = true;
-    const cabin = box(44, 12, 38, lambert(0x14161f), -3, 24, 0, g);
-    cabin.castShadow = true;
-    if (car.mission) box(84, 3, 10, lambert(0x14161f), 0, 20.5, 0, g); // coupe stripe
+    if (type === 'taxi') {
+      box(16, 5, 10, new THREE.MeshBasicMaterial({ color: 0xfff6d8 }), -3, 32, 0, g); // roof sign
+    }
+    if (car.kind === 'mission') box(84, 3, 10, lambert(0x14161f), 0, 16.5, 0, g); // coupe stripe
     const wheelGeo = new THREE.CylinderGeometry(9, 9, 6, 10);
     const wheelMat = lambert(0x0c0c10);
     for (const [wx, wz] of [[29, 22], [29, -22], [-29, 22], [-29, -22]]) {
@@ -495,6 +704,70 @@ export function createRenderer(glCanvas, hudCanvas) {
   muzzleSprite.scale.set(46, 46, 1);
   scene.add(muzzleSprite);
 
+  // A flock of shore birds circling over the water, wings beating.
+  const birdFlock = new THREE.Group();
+  const birdMat = new THREE.MeshBasicMaterial({ color: 0x1c1c26, side: THREE.DoubleSide });
+  const birds = [];
+  for (let i = 0; i < 12; i += 1) {
+    const bird = new THREE.Group();
+    const wingGeo = new THREE.PlaneGeometry(11, 3);
+    const wl = new THREE.Mesh(wingGeo, birdMat);
+    wl.position.x = -5;
+    const wr = new THREE.Mesh(wingGeo, birdMat);
+    wr.position.x = 5;
+    const pivotL = new THREE.Group();
+    pivotL.add(wl);
+    const pivotR = new THREE.Group();
+    pivotR.add(wr);
+    bird.add(pivotL);
+    bird.add(pivotR);
+    bird.userData = {
+      pivotL, pivotR,
+      radius: 40 + hashOf(i * 13 + 1) * 110,
+      speed: 0.14 + hashOf(i * 19 + 2) * 0.1,
+      phase: hashOf(i * 23 + 3) * Math.PI * 2,
+      flap: 7 + hashOf(i * 29 + 4) * 3,
+    };
+    birdFlock.add(bird);
+    birds.push(bird);
+  }
+  scene.add(birdFlock);
+
+  const swayDummy = new THREE.Object3D();
+  function updateAmbient(world) {
+    const t = world.elapsed;
+    // Birds: one slow circle over the bay, each on its own radius.
+    const cx = WORLD.waterX + 300 + Math.sin(t * 0.021) * 160;
+    const cz = WORLD.height / 2 + Math.cos(t * 0.016) * 800;
+    for (const bird of birds) {
+      const u = bird.userData;
+      const a = t * u.speed + u.phase;
+      bird.position.set(cx + Math.cos(a) * u.radius, 128 + Math.sin(t * 0.7 + u.phase) * 12, cz + Math.sin(a) * u.radius);
+      bird.rotation.y = -a - Math.PI / 2 + Math.PI;
+      const flap = Math.sin(t * u.flap + u.phase) * 0.65;
+      u.pivotL.rotation.z = flap;
+      u.pivotR.rotation.z = -flap;
+    }
+    // Palms near the camera lean their fronds in the sea breeze.
+    if (frondInstRef && camPos) {
+      let updated = false;
+      cityPalmsRef.forEach((palm, i) => {
+        const dx = palm.x - camPos.x, dz = palm.y - camPos.z;
+        if (dx * dx + dz * dz > 560 * 560) return;
+        const sway = Math.sin(t * 1.7 + palm.x * 0.013 + palm.y * 0.007) * 0.055;
+        for (let k = 0; k < 6; k += 1) {
+          const a = (k / 6) * Math.PI * 2;
+          swayDummy.position.set(palm.x + Math.cos(a) * 8, 27, palm.y + Math.sin(a) * 8);
+          swayDummy.rotation.set(Math.sin(a) * 1.15 + sway, 0, -Math.cos(a) * 1.15 + sway * 0.7);
+          swayDummy.updateMatrix();
+          frondInstRef.setMatrixAt(i * 6 + k, swayDummy.matrix);
+        }
+        updated = true;
+      });
+      if (updated) frondInstRef.instanceMatrix.needsUpdate = true;
+    }
+  }
+
   // ---------- camera rig ----------
 
   let camPos = null;
@@ -535,6 +808,7 @@ export function createRenderer(glCanvas, hudCanvas) {
     sun.position.set(focus.x + sun.userData.dx * 700, sun.userData.dy * 700 + 120, focus.y + 260);
     sun.target.position.set(focus.x, 0, focus.y);
     stars.position.set(camera.position.x, 0, camera.position.z);
+    skyDome.position.set(camera.position.x, 0, camera.position.z);
     sunSprite.position.set(
       camera.position.x + sun.userData.dx * 2300,
       Math.max(90, sun.userData.dy * 1500),
@@ -562,7 +836,42 @@ export function createRenderer(glCanvas, hudCanvas) {
     sunSprite.material.opacity = clamp(1 - light.dark * 1.4, 0, 0.95);
     for (const glow of lampGlows) glow.material.opacity = light.dark * 0.8;
     if (waterMat) waterMat.map.offset.set(world.elapsed * 0.008, world.elapsed * 0.003);
-    if (foamMesh) foamMesh.position.x = WORLD.waterX + 3 + Math.sin(world.elapsed * 1.3) * 4;
+    for (const foam of foamMeshes) {
+      foam.position.x = WORLD.waterX + 3 + foam.userData.phase * 12
+        + Math.sin(world.elapsed * 1.3 + foam.userData.phase) * 4;
+    }
+    if (glintMesh) glintMesh.material.opacity = clamp(light.sun * 0.34 + light.warm * 0.3, 0, 0.5);
+    for (const streak of waterStreaks) {
+      streak.material.opacity = light.dark * (0.16 + 0.08 * Math.sin(world.elapsed * 2.4 + streak.userData.phase));
+      streak.position.x = streak.userData.baseX + Math.sin(world.elapsed * 1.8 + streak.userData.phase) * 5;
+    }
+    for (const glow of signGlows) glow.material.opacity = light.dark * 0.5;
+    // The sky dome dims into night and warms at dusk.
+    skyDome.material.color.setRGB(
+      0.34 + light.sun * 0.66 + light.warm * 0.14,
+      0.32 + light.sun * 0.62,
+      0.42 + light.sun * 0.58,
+    );
+    for (const cloud of cloudSprites) {
+      cloud.position.set(
+        ((cloud.userData.bx + world.elapsed * cloud.userData.drift) % (WORLD.width + 800)) - 400,
+        cloud.userData.y,
+        cloud.userData.bz,
+      );
+      cloud.material.opacity = 0.05 + light.warm * 0.1 + light.sun * 0.05;
+    }
+    // Traffic lights run a simple two-phase cycle: one axis flows while the
+    // other waits, with a shared amber beat between phases.
+    if (trafficMats) {
+      const cycle = world.elapsed % 13;
+      let nsColor, ewColor;
+      if (cycle < 5.6) { nsColor = 0x2eff7b; ewColor = 0xff4040; }
+      else if (cycle < 6.4) { nsColor = 0xffb703; ewColor = 0xffb703; }
+      else if (cycle < 12.2) { nsColor = 0xff4040; ewColor = 0x2eff7b; }
+      else { nsColor = 0xffb703; ewColor = 0xffb703; }
+      trafficMats.ns.color.setHex(nsColor);
+      trafficMats.ew.color.setHex(ewColor);
+    }
     return light;
   }
 
@@ -584,7 +893,11 @@ export function createRenderer(glCanvas, hudCanvas) {
 
     const livePeds = new Set(world.peds);
     for (const ped of world.peds) {
-      if (!pedMeshes.has(ped)) pedMeshes.set(ped, makePersonMesh(ped.dealer ? 'dealer' : 'ped', ped.color));
+      if (!pedMeshes.has(ped)) {
+        const mesh = makePersonMesh(ped.dealer ? 'dealer' : 'ped', ped.color);
+        mesh.scale.setScalar(0.92 + hashOf(Math.round(ped.x) * 3 + Math.round(ped.y) * 11) * 0.16);
+        pedMeshes.set(ped, mesh);
+      }
       const mesh = pedMeshes.get(ped);
       const bob = ped.dead ? 0 : Math.abs(Math.sin(world.elapsed * 7 + ped.x * 0.05)) * 1.1;
       syncGroup(pedMeshes, ped, mesh, bob);
@@ -769,6 +1082,24 @@ export function createRenderer(glCanvas, hudCanvas) {
       h.beginPath(); h.arc(x + wx * sx, y + wy * sy, r, 0, Math.PI * 2); h.fill();
     };
     for (const car of world.cars) if (car.kind === 'police') dot(car.x, car.y, '#5b8cff', 3);
+    // Place icons: a letter in a dark chip, the way open-world minimaps mark
+    // the businesses that matter (hotel, bank, clinic, police, safehouse...).
+    const placeIcons = [
+      ['hotel', 'H', '#ff2e88'], ['bank', '$', '#ffd23f'], ['clinic', '+', '#06d6a0'],
+      ['policeStation', 'P', '#5b8cff'], ['hideout', 'S', '#c77dff'], ['market', 'M', '#ff7b54'],
+      ['carLot', 'C', '#22d3ee'], ['garage', 'G', '#f5f2ea'],
+    ];
+    h.font = 'bold 8px system-ui';
+    h.textAlign = 'center';
+    for (const [key, letter, color] of placeIcons) {
+      const place = city.places[key];
+      if (!place) continue;
+      const px = x + place.x * sx, py = y + place.y * sy;
+      h.fillStyle = 'rgba(8,8,14,0.85)';
+      h.beginPath(); h.arc(px, py, 5.5, 0, Math.PI * 2); h.fill();
+      h.fillStyle = color;
+      h.fillText(letter, px, py + 2.8);
+    }
     const target = world.objectiveTarget();
     if (target) {
       dot(target.x, target.y, PALETTE.neonGold, 4.5);
@@ -1064,6 +1395,7 @@ export function createRenderer(glCanvas, hudCanvas) {
     lightCache = updateLighting(world);
     updateCamera(world, dt);
     syncDynamics(world);
+    updateAmbient(world);
     renderer.render(scene, camera);
     h.clearRect(0, 0, VIEW.width, VIEW.height);
     if (screen === 'title') {

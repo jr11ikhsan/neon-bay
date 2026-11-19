@@ -170,4 +170,4 @@ if (shotName) {
 }
 
 // A handle for automated playtests and curious players in the console.
-window.__neonBay = { get world() { return world; }, saveGame, loadGame };
+window.__neonBay = { get world() { return world; }, get screen() { return screen; }, saveGame, loadGame };

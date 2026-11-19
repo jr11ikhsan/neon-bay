@@ -52,12 +52,12 @@ export const CAR = {
 };
 
 export const TRAFFIC = {
-  count: 26,
+  count: 34,
   speed: 205,
-  parkedCount: 30,
+  parkedCount: 36,
 };
 
-export const PEDS = { count: 34 };
+export const PEDS = { count: 46 };
 
 export const POLICE = {
   carSpeed: 565,
