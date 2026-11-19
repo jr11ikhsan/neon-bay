@@ -4,9 +4,11 @@
 // screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
 // judge reads, with the vendored make.fun library. The game itself is an original top-down
 // open-world crime story on a neon beach: a procedural city with traffic and pedestrians,
-// stealable cars, a five-star wanted system with police chases on wheels and on foot, fists and
-// a pistol, a four-mission story, a live minimap, a day/dusk/night cycle, procedural WebAudio
-// sound, and localStorage saves — every line of it in game/src/, written for this entry.
+// stealable cars (parked, moving and even the mission coupe), a five-star wanted system with
+// police chases on wheels and on foot, fists and a pistol, a four-mission story with a bank
+// score at the end, a live minimap, a day/dusk/night cycle, procedural WebAudio sound, and
+// localStorage saves — every line of it in game/src/, written for this entry. Controls: WASD
+// and the mouse, E to get in and out of cars, P to pause; the gold pillar marks the objective.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
