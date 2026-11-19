@@ -17,7 +17,9 @@ function stepPlay(world, seconds, control) {
 }
 
 function stageStart(world) {
+  world.state.hour = 16.9; // golden afternoon behind the title
   stepAmbient(world, 5);
+  world.state.toasts.length = 0;
   return { screen: SCREEN_TITLE };
 }
 
@@ -60,6 +62,8 @@ function stageChase(world) {
     }
     world.step(STEP, { mx: 1, my: 0, run: true, attack: i % 30 < 14, interact: false, aimX: tx, aimY: ty }, false);
   }
+  state.toasts.length = 0;
+  world.toast('The law is closing in', 'Four stars on the sand — run or fight.');
   return { screen: SCREEN_PLAY };
 }
 
@@ -82,6 +86,7 @@ function stageEnd(world) {
     state.targetCar.missionTarget = false;
     state.player.x = 3040; state.player.y = 3206;
   }
+  state.toasts.length = 0;
   world.toast('NEON BAY — story complete', 'Free roam: the city, the cops and the beach are still out there.');
   stepPlay(world, 1.2, IDLE);
   return { screen: SCREEN_PLAY };
