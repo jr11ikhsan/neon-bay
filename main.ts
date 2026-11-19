@@ -1,14 +1,18 @@
 // NEON BAY — a gta6-01 entry (Node 22, standard library only): the game is this directory's
 // game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
-// modules, no library and no network request), and the program hands it in. It copies game/ and
+// modules, no network request), and the program hands it in. It copies game/ and
 // screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library. The game itself is an original top-down
-// open-world crime story on a neon beach: a procedural city with traffic and pedestrians,
-// stealable cars (parked, moving and even the mission coupe), a five-star wanted system with
-// police chases on wheels and on foot, fists and a pistol, a four-mission story with a bank
-// score at the end, a live minimap, a day/dusk/night cycle, procedural WebAudio sound, and
-// localStorage saves — every line of it in game/src/, written for this entry. Controls: WASD
-// and the mouse, E to get in and out of cars, P to pause; the gold pillar marks the objective.
+// judge reads, with the vendored make.fun library. The game itself is an original 3D open-world
+// crime story on a neon beach at dusk, built on Three.js (vendored in game/lib/, MIT — the only
+// third-party library; see game/lib/THREE-LICENSE.txt and the entry README): a procedural
+// low-poly city with dense traffic in several vehicle types, pedestrians, traffic lights and
+// shore birds, stealable cars (parked, moving and even the mission coupe), a five-star wanted
+// system with police chases on wheels and on foot, fists and a pistol, a four-mission story
+// with a bank score at the end, a live minimap with place icons, a dusk-to-night light cycle,
+// procedural WebAudio sound, and localStorage saves — every line of it in game/src/, written
+// for this entry (main.ts itself refreshed in the new recorded session for the 3D entry).
+// Controls: WASD and the mouse, E to get in and out of cars, P to pause; the gold pillar
+// marks the objective.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
