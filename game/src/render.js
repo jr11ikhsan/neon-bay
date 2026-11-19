@@ -234,10 +234,12 @@ export class Renderer {
       f.position.set(tx(city.waterX + 6 + i * 26), 0.4 + i * 0.15, 0);
       this.scene.add(f); this.foam.push(f);
     }
-    // mission pillar + ring
+    // mission pillar + ring — a slim shaft of light, not a wall: thin
+    // radius, front faces only, gentle opacity, so from a low chase
+    // camera it reads as a beacon instead of a solid slab.
     this.pillar = new THREE.Mesh(
-      new THREE.CylinderGeometry(30, 30, 340, 18, 1, true),
-      new THREE.MeshBasicMaterial({ color: PALETTE.neonGold, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }),
+      new THREE.CylinderGeometry(16, 16, 340, 18, 1, true),
+      new THREE.MeshBasicMaterial({ color: PALETTE.neonGold, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending }),
     );
     this.pillar.position.y = 170;
     this.scene.add(this.pillar);
@@ -331,16 +333,16 @@ export class Renderer {
     const g = this.skyCanvas.getContext('2d');
     const grad = g.createLinearGradient(0, 0, 0, 256);
     const mix = (a, b, t) => a.map((v, i) => Math.round(lerp(v, b[i], t)));
-    const top = mix([38, 24, 84], [5, 8, 26], nf), mid = mix([148, 62, 128], [16, 20, 48], nf), low = mix([255, 150, 84], [30, 32, 66], nf);
+    const top = mix([38, 24, 84], [17, 23, 56], nf), mid = mix([148, 62, 128], [36, 44, 88], nf), low = mix([255, 150, 84], [54, 60, 106], nf);
     grad.addColorStop(0, `rgb(${top})`); grad.addColorStop(0.55, `rgb(${mid})`); grad.addColorStop(0.8, `rgb(${low})`); grad.addColorStop(1, `rgb(${low})`);
     g.fillStyle = grad; g.fillRect(0, 0, 4, 256);
     this.skyTex.needsUpdate = true;
   }
 
   updateLighting(nf) {
-    this.hemi.intensity = lerp(0.75, 0.9, nf);
+    this.hemi.intensity = lerp(0.75, 1.0, nf);
     this.hemi.color.setHSL(0.72, 0.45, lerp(0.62, 0.5, nf));
-    this.amb.intensity = lerp(0.26, 0.4, nf);
+    this.amb.intensity = lerp(0.26, 0.5, nf);
     const p = this.world.player;
     if (nf < 0.85) { // the sun, low and golden
       this.dirLight.color.set(0xffa64d);
@@ -355,7 +357,7 @@ export class Renderer {
     for (const m of this.buildingMats) m.emissiveIntensity = lerp(0.25, 1.7, nf);
     this.lampMat.opacity = nf * 0.85;
     this.starsMat.opacity = nf * 0.95;
-    this.scene.fog.color.setRGB(lerp(0.16, 0.03, nf), lerp(0.1, 0.04, nf), lerp(0.27, 0.1, nf));
+    this.scene.fog.color.setRGB(lerp(0.16, 0.07, nf), lerp(0.1, 0.09, nf), lerp(0.27, 0.19, nf));
     this.sunSprite.material.opacity = 1 - nf;
     this.moonSprite.material.opacity = nf;
     const sunA = Math.PI * 0.78;

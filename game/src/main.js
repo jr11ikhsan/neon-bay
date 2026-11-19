@@ -140,7 +140,10 @@ function frame(now) {
   if (shotName) {
     if (!shotDone) {
       if (shotIdx < shotPlan.ticks) { shotTick(world, shotName, shotIdx); world.tick(STEP); shotIdx++; }
-      else if (++shotFrames >= 6) { shotDone = true; window.__shotReady = true; }
+      else {
+        if (shotFrames === 0) world.toasts.length = 0; // setup toasts would otherwise freeze on screen: world time stops here
+        if (++shotFrames >= 6) { shotDone = true; window.__shotReady = true; }
+      }
     }
     renderer.draw(dt, uiState());
     prevMouse = input.mouseDown;
