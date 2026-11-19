@@ -103,7 +103,7 @@ export function createCity(seed) {
         continue;
       }
       // generic block: subdivide into 1, 2 or 4 buildings
-      const layout = rng.pick(['single', 'h2', 'v2', 'quad', 'h2', 'v2']);
+      const layout = rng.pick(['h2', 'v2', 'quad', 'quad', 'h2', 'v2']);
       const cells = [];
       if (layout === 'single') cells.push([x0, y0, bw, bh]);
       else if (layout === 'h2') { const w2 = (bw - 18) / 2; cells.push([x0, y0, w2, bh], [x0 + w2 + 18, y0, w2, bh]); }

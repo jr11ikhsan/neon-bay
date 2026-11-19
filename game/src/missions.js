@@ -16,7 +16,7 @@ export const MISSIONS = [
     id: 'package-run', title: 'Package Run', reward: 350,
     intro: 'A package waits in the west park. It is hot — the whole bay will smell it.',
     steps: [
-      { t: 'pickup', point: 'park', heat: 170, label: 'Pick up the package in the west park' },
+      { t: 'pickup', point: 'park', heat: 210, label: 'Pick up the package in the west park' },
       { t: 'meet', place: 'hotel', label: 'Drop the package at Hotel Lumina' },
     ],
   },
@@ -32,7 +32,7 @@ export const MISSIONS = [
     id: 'big-score', title: 'The Big Score', reward: 1500,
     intro: 'Banco Neon keeps its vault polite and unlocked for exactly three seconds. Be there.',
     steps: [
-      { t: 'channel', place: 'bank', secs: 3, heat: 430, label: 'Crack the Banco Neon vault' },
+      { t: 'channel', place: 'bank', secs: 3, heat: 540, label: 'Crack the Banco Neon vault' },
       { t: 'escape', label: 'Lose the heat' },
     ],
   },

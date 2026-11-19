@@ -42,7 +42,7 @@ export function createWorld(seed = 1) {
   let nextId = 1;
   const player = W.player = {
     x: city.spawn.x, y: city.spawn.y, a: -Math.PI / 2, hp: PLAYER.hp,
-    car: null, weapon: 'fist', weapons: ['fist'], fireCd: 0, punchCd: 0, dead: false,
+    car: null, weapon: 'fist', weapons: ['fist'], fireCd: 0, punchCd: 0, dead: false, hitT: 0,
   };
 
   // ------------------------------------------------------------- spawning
@@ -189,7 +189,7 @@ export function createWorld(seed = 1) {
       W.mIdx++; W.sIdx = 0;
       W.saveRequested = true;
       if (W.mIdx >= MISSIONS.length) { W.storyComplete = true; W.banner = { title: 'STORY COMPLETE', sub: 'Neon Bay is yours. Free roam — the bank vault refills.', t: 6 }; }
-      else startMissionBanner();
+      else { startMissionBanner(); onStepBegin(); }
     } else {
       toast(stepDef().label, 3.4);
       onStepBegin();
@@ -356,11 +356,18 @@ export function createWorld(seed = 1) {
       const d = Math.hypot(c.x - player.x, c.y - player.y);
       if ((c.wrecked && d > 1300) || (st === 0 && d > 1500) || d > 2400) { W.cars.splice(i, 1); continue; }
       if (c.wrecked || c.driver !== 'police') continue;
+      if (st === 0) { c.driver = 'traffic'; c.wp = null; continue; } // heat gone: the patrol breaks off and rejoins traffic
       // pursuit: grid-route when far or blind, direct chase (with flanks) when close
       c.routeT -= dt;
-      const direct = d < 430 && lineOfSight(city, c.x, c.y, player.x, player.y);
+      // a boxed-in suspect breaks the box: if we have sat on a nearly stopped
+      // car for a while, pull away and come back for another run at it
+      if (player.car && d < 95 && Math.abs(player.car.speed) < 45) c.boxT = (c.boxT || 0) + dt; else c.boxT = 0;
+      if (c.boxT > 2.2) { c.boxT = 0; c.repoT = 2.6; const l = d || 1; c.wp = { x: clamp(c.x + (c.x - player.x) / l * 380, 60, WORLD.w - 60), y: clamp(c.y + (c.y - player.y) / l * 380, 60, WORLD.h - 60) }; }
+      if (c.repoT > 0) c.repoT -= dt;
+      const direct = c.repoT <= 0 && d < 430 && lineOfSight(city, c.x, c.y, player.x, player.y);
       let tx, ty;
-      if (direct) {
+      if (c.repoT > 0 && c.wp) { tx = c.wp.x; ty = c.wp.y; }
+      else if (direct) {
         tx = player.x; ty = player.y;
         if (d < 320) { const px = -(player.y - c.y), py = (player.x - c.x); const l = Math.hypot(px, py) || 1; tx += (px / l) * c.flank * 118; ty += (py / l) * c.flank * 118; }
       } else {
@@ -369,6 +376,9 @@ export function createWorld(seed = 1) {
       }
       let top = POLICE.carSpeed * c.top * (0.82 + st * 0.05);
       if (d < 74 && !player.car) top = 0;
+      // pace a fleeing car from behind or alongside instead of ramming through
+      // it; a unit ahead of the suspect is a roadblock, not a magnet
+      if (player.car && d < 84 && (c.x - player.x) * Math.cos(player.a) + (c.y - player.y) * Math.sin(player.a) < 30) top = Math.min(top, Math.abs(player.car.speed) * 0.99 + 14);
       steerCar(c, tx, ty, top, dt);
       // officer steps out when close and the player is exposed
       const footWant = POLICE.footByStar[st];
@@ -392,7 +402,8 @@ export function createWorld(seed = 1) {
         const [nx, ny] = collideWorld(city, o.x, o.y, 13); o.x = nx; o.y = ny;
       }
       o.fireCd -= dt;
-      if (st >= 2 && d < POLICE.shootRange && o.fireCd <= 0 && lineOfSight(city, o.x, o.y, player.x, player.y)) {
+      // officers engage an on-foot suspect; a moving car is the patrol cars' problem
+      if (st >= 2 && !player.car && d < POLICE.shootRange && o.fireCd <= 0 && lineOfSight(city, o.x, o.y, player.x, player.y)) {
         o.fireCd = POLICE.shootRate * rng.range(0.8, 1.3);
         say('shot-pistol');
         const miss = rng.chance(0.48);
@@ -459,7 +470,9 @@ export function createWorld(seed = 1) {
     car.speed -= car.speed * CAR.drag * dt * 0.35;
     if (!th) car.speed *= (1 - 0.5 * dt);
     const steer = inp.mx;
-    if (Math.abs(car.speed) > 4) car.a += steer * CAR.turn * dt * clamp(car.speed / 250, -1, 1);
+    // arcade handling: keep at least 35% steering authority at a crawl, so a
+    // car nosed into a wall can always turn itself free
+    if (Math.abs(car.speed) > 4) car.a += steer * CAR.turn * dt * clamp(Math.abs(car.speed) / 250, 0.35, 1) * Math.sign(car.speed);
     const px = car.x, py = car.y;
     car.x += Math.cos(car.a) * car.speed * dt;
     car.y += Math.sin(car.a) * car.speed * dt;
@@ -476,7 +489,7 @@ export function createWorld(seed = 1) {
   }
   function updatePlayer(dt, inp) {
     if (player.dead) return;
-    player.fireCd -= dt; player.punchCd -= dt;
+    player.fireCd -= dt; player.punchCd -= dt; player.hitT -= dt;
     if (inp.weapon != null) {
       const wname = WEAPON_ORDER[inp.weapon];
       if (wname && player.weapons.includes(wname)) { player.weapon = wname; say('click'); }
@@ -524,7 +537,7 @@ export function createWorld(seed = 1) {
           if (a === player.car || b === player.car) { W.camShake = Math.min(8, W.camShake + rel * 0.012); say('crash'); }
         }
         const avg = (a.speed + b.speed) / 2;
-        a.speed = avg * 0.7; b.speed = avg * 0.7;
+        a.speed = avg * 0.88; b.speed = avg * 0.88; // contact costs some pace, but never glues two cars together
       }
       // car vs peds / player
       if (Math.abs(a.speed) > 130) {
@@ -534,8 +547,9 @@ export function createWorld(seed = 1) {
           if (a === player.car) { addHeat(85, p.x, p.y); say('crash'); }
           a.speed *= 0.82;
         }
-        if (!player.car && !player.dead && a.driver && Math.hypot(player.x - a.x, player.y - a.y) < 34) {
+        if (!player.car && !player.dead && player.hitT <= 0 && a.driver && Math.hypot(player.x - a.x, player.y - a.y) < 34) {
           hurtPlayer(11);
+          player.hitT = 1.1; // brief grace so one car cannot chain-hit the player to death
           player.x += Math.cos(a.a) * 26; player.y += Math.sin(a.a) * 26;
         }
       }
@@ -552,9 +566,9 @@ export function createWorld(seed = 1) {
       const atSafe = Math.hypot(player.x - city.places.safehouse.bx, player.y - city.places.safehouse.by) < city.places.safehouse.r;
       W.heat = Math.max(0, W.heat - (atSafe ? WANTED.safehouseDecay : WANTED.decay) * dt);
     }
-    // busted meter
+    // busted meter (only under active heat — nobody arrests a clean citizen)
     let pressure = 0;
-    if (!player.car && !player.dead) {
+    if (!player.car && !player.dead && stars() >= 1) {
       for (const o of W.officers) { const d = Math.hypot(o.x - player.x, o.y - player.y); if (d < POLICE.bustRange) pressure = Math.max(pressure, 1 - d / POLICE.bustRange + 0.35); }
       for (const c of W.cars) if (c.kind === 'police' && Math.abs(c.speed) < 26 && Math.hypot(c.x - player.x, c.y - player.y) < 62) pressure = Math.max(pressure, 0.6);
     }
@@ -721,7 +735,14 @@ export function createWorld(seed = 1) {
       const [nx, ny] = collideWorld(city, player.x, player.y, PLAYER.r); player.x = nx; player.y = ny;
       return;
     }
+    // standing right at a place's door, E talks to the place — unless a car
+    // is even closer (the Bay Motors lot is full of parked cars, and the
+    // mission coupe sits near its door)
+    const door = nearestPlace();
+    const doorD = door ? Math.hypot(player.x - door.bx, player.y - door.by) : Infinity;
     const c = nearCar();
+    const carD = c ? Math.hypot(c.x - player.x, c.y - player.y) : Infinity;
+    if (door && doorD < 56 && doorD <= carD) { placeInteract(door); return; }
     if (c) {
       const wasTraffic = c.driver === 'traffic';
       if (wasTraffic) { ejectDriver(c, 'ped'); scareNearby(c.x, c.y); }
@@ -736,7 +757,9 @@ export function createWorld(seed = 1) {
       return;
     }
     const p = nearestPlace();
-    if (!p) return;
+    if (p) placeInteract(p);
+  }
+  function placeInteract(p) {
     switch (p.id) {
       case 'clinic': if (player.hp < PLAYER.hp && pay(PRICES.heal)) { player.hp = PLAYER.hp; toast('Patched up', 2); } break;
       case 'police': if (W.heat > 0 && pay(PRICES.bribe)) { W.heat = 0; toast('The desk sergeant nods. Heat cleared.', 2.6); } break;
@@ -775,7 +798,7 @@ export function createWorld(seed = 1) {
       else if (c.hp < 45 && c.driver && rng.chance(dt * 3)) addFx({ kind: 'smoke', x: c.x, y: c.y, vx: 0, vy: -16, ttl: 0.7, max: 0.7 });
     }
     updatePlayer(dt, inp);
-    for (const c of W.cars) { if (c.kind === 'traffic') updateTraffic(c, dt); }
+    for (const c of W.cars) { if (c.driver === 'traffic') updateTraffic(c, dt); }
     updatePolice(dt);
     updatePeds(dt);
     updateCollisions(dt);
