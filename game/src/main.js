@@ -1,206 +1,169 @@
-// NEON BAY — boot and the one loop: input is read every frame, the world advances
-// in fixed 1/60 s steps, and the renderer paints what is there. Screens: title,
-// play, paused, and the busted/wasted card. Saves live in localStorage; sound is
-// procedural WebAudio and starts on the first interaction.
-//
-// ?seed=N fixes the city and the scene randomness. ?shot=start|play|chase|end
-// (with &seed=N) stages that scene instead of running the loop, paints it twice
-// and sets window.__shotReady for a screenshot.
-import { BEST_KEY, PLAYER, SAVE_KEY, STEP } from './config.js';
-import { createRandom } from './random.js';
-import { createCity } from './city.js';
-import { createWorld, EV } from './world.js';
-import { ACTION_CONFIRM, ACTION_INTERACT, ACTION_PAUSE, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// NEON BAY — boot and the main loop. Owns the screens (title, playing, paused),
+// the fixed-step clock that feeds world.js its 1/60 updates, the localStorage
+// save/continue flow, the extra menu keys (M mute, S save, R restart, C
+// continue), and the ?shot= staging path the screenshot harness drives. The
+// simulation itself lives in world.js and every pixel in render.js; this file
+// is only the wiring between input, world, audio and screen.
+
+import { STEP, SAVE_KEY, BEST_KEY } from './config.js';
+import { createInput, ACTION_CONFIRM, ACTION_PAUSE, ACTION_INTERACT } from './input.js';
 import { createAudio } from './audio.js';
-import { stageShot } from './shots.js';
-
-const MAX_FRAME = 0.25;
-
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
+import { createWorld } from './world.js';
+import { createRenderer, cameraFor } from './render.js';
+import { setupShot, shotControls, SHOT_STEP_SECONDS } from './shots.js';
 
 const canvas = document.getElementById('game');
-const status = document.getElementById('status');
-const city = createCity(createRandom(seed ^ 0x9e3779b9));
-const world = createWorld(createRandom(seed), city);
-const renderer = createRenderer(canvas, city);
+const renderer = createRenderer(canvas);
+const input = createInput(canvas);
 const audio = createAudio();
 
-function readSave() {
-  try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+const params = new URLSearchParams(window.location.search);
+const seed = Number(params.get('seed') || 1) || 1;
+const shotName = params.get('shot');
+
+// A silent stand-in for the audio facade while staging screenshots, so a
+// headless browser never has to start an AudioContext without a gesture.
+const silentAudio = {
+  unlock() {}, toggleMute() { return true; }, isMuted() { return true; },
+  shot() {}, punch() {}, hurt() {}, cash() {}, pickup() {}, enterCar() {},
+  crash() {}, mission() {}, failed() {}, busted() {},
+  setEngine() {}, setSiren() {},
+};
+
+let world = null;
+let screen = 'title';
+
+function wireWorld(w) {
+  w.onMissionComplete = () => saveGame();
+  return w;
 }
-function writeSave() {
+
+function newWorld() {
+  world = wireWorld(createWorld(seed));
+  return world;
+}
+
+function hasSave() {
+  try { return !!window.localStorage.getItem(SAVE_KEY); } catch { return false; }
+}
+
+function saveGame() {
+  if (!world) return;
   try {
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(world.serialize()));
-    const best = Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0;
-    if (world.state.earned > best) window.localStorage.setItem(BEST_KEY, String(world.state.earned));
-  } catch {
-    // Storage can be off (private windows): the save then lasts this visit only.
-  }
+    const best = Number(window.localStorage.getItem(BEST_KEY) || 0);
+    if (world.money > best) window.localStorage.setItem(BEST_KEY, String(world.money));
+    world.toast('Game saved');
+  } catch { /* storage unavailable: play on without saves */ }
 }
 
-function runShot(name) {
-  const scene = stageShot(name, world);
-  let painted = 0;
-  function paint() {
-    renderer.draw(world.state, scene.screen, { hasSave: false, muted: false, storyDone: false, nearCar: false });
-    painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
-    else window.__shotReady = true;
-  }
-  requestAnimationFrame(paint);
+function loadGame() {
+  try {
+    const raw = window.localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    newWorld();
+    world.restore(JSON.parse(raw));
+    world.toast('Welcome back to Neon Bay');
+    return true;
+  } catch { return false; }
 }
 
-function runGame() {
-  const input = createInput(canvas);
-  let screen = SCREEN_TITLE;
-  let save = readSave();
-  let accumulator = 0;
-  let last = performance.now();
-  let interactQueued = false;
+newWorld();
 
-  function announce(message) {
-    status.textContent = message;
+// Menu keys that input.js does not turn into actions.
+window.addEventListener('keydown', (event) => {
+  if (event.code === 'KeyM') audio.toggleMute();
+  if (screen === 'title' && event.code === 'KeyC' && hasSave()) {
+    if (loadGame()) { audio.unlock(); screen = 'playing'; }
+  } else if (screen === 'paused' && event.code === 'KeyS') {
+    saveGame();
+  } else if (screen === 'paused' && event.code === 'KeyR') {
+    newWorld();
+    screen = 'playing';
   }
+});
 
-  function startGame(withSave) {
-    world.reset(withSave ? save : null);
-    accumulator = 0;
-    screen = SCREEN_PLAY;
-    audio.unlock();
-    announce(withSave ? 'Welcome back to Neon Bay.' : 'Neon Bay. Mission 1: First Wheels.');
-  }
+function controlsForPlayer() {
+  const cam = cameraFor(world);
+  const aimAngle = Math.atan2(
+    cam.y + input.pointer.y - world.player.y,
+    cam.x + input.pointer.x - world.player.x,
+  );
+  return {
+    moveX: input.moveX(),
+    moveY: input.moveY(),
+    run: input.running(),
+    attack: input.attackHeld(),
+    aimAngle,
+    interact: false, // filled by the loop from the one-shot action flags
+  };
+}
 
-  // Menu keys the bit-flag input does not carry.
-  window.addEventListener('keydown', (event) => {
-    if (event.code === 'KeyM') {
-      const muted = audio.toggleMute();
-      announce(muted ? 'Sound off.' : 'Sound on.');
-    }
-    if (screen === SCREEN_TITLE && event.code === 'KeyC' && save) startGame(true);
-    else if (screen === SCREEN_PAUSED && event.code === 'KeyS') {
-      writeSave();
-      save = readSave();
-      world.toast('Game saved', 'Continue from the title screen any time.');
-      screen = SCREEN_PLAY;
-    } else if (screen === SCREEN_PAUSED && event.code === 'KeyR') {
-      startGame(false);
-    }
-  });
+const IDLE = { moveX: 0, moveY: 0, run: false, attack: false, interact: false, aimAngle: 0 };
 
-  function react(events) {
-    if (events & EV.SHOT) audio.shot();
-    if (events & EV.PUNCH) audio.punch();
-    if (events & EV.CASH) audio.cash();
-    if (events & EV.PICKUP) audio.pickup();
-    if (events & EV.ENTER || events & EV.EXIT) audio.enterCar();
-    if (events & EV.CRASH) audio.crash(1);
-    if (events & EV.HURT) audio.hurt();
-    if (events & EV.MISSION) { audio.mission(); writeSave(); save = readSave(); }
-    if (events & EV.BUSTED) { audio.busted(); screen = SCREEN_OVER; announce('Busted.'); }
-    if (events & EV.WASTED) { audio.failed(); screen = SCREEN_OVER; announce('Wasted.'); }
-  }
-
-  function buildControl() {
-    const aim = renderer.screenToWorld(input.pointer.x, input.pointer.y);
-    return {
-      mx: input.moveX(),
-      my: input.moveY(),
-      run: input.running(),
-      attack: input.attackHeld(),
-      interact: interactQueued,
-      aimX: aim.x,
-      aimY: aim.y,
-    };
-  }
-
-  function frame(now) {
-    requestAnimationFrame(frame);
-    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
-    last = now;
-
-    const actions = input.takeActions();
-    if (actions & ACTION_INTERACT) interactQueued = true;
-    if (actions & ACTION_PAUSE) {
-      if (screen === SCREEN_PLAY) { screen = SCREEN_PAUSED; announce('Paused.'); }
-      else if (screen === SCREEN_PAUSED) { screen = SCREEN_PLAY; announce('Playing.'); }
-    }
+function stepOnce(actions) {
+  if (screen === 'title') {
     if (actions & ACTION_CONFIRM) {
       audio.unlock();
-      if (screen === SCREEN_TITLE) startGame(false);
-      else if (screen === SCREEN_OVER) {
-        world.respawn();
-        screen = SCREEN_PLAY;
-        announce('Back on the street.');
-      } else if (screen === SCREEN_PAUSED) screen = SCREEN_PLAY;
+      screen = 'playing';
+      return;
     }
-
-    if (screen === SCREEN_TITLE) {
-      while (accumulator >= STEP) {
-        world.step(STEP, { mx: 0, my: 0, run: false, attack: false, interact: false, aimX: 0, aimY: 0 }, true);
-        accumulator -= STEP;
-      }
-    } else if (screen === SCREEN_PLAY) {
-      while (accumulator >= STEP && screen === SCREEN_PLAY) {
-        const control = buildControl();
-        interactQueued = false;
-        const events = world.step(STEP, control, false);
-        react(events);
-        accumulator -= STEP;
-      }
-    } else {
-      accumulator = 0;
-    }
-
-    // Continuous sound: engine + nearest siren.
-    const p = world.state.player;
-    if (screen === SCREEN_PLAY && p.inCar) audio.setEngine(true, Math.abs(p.inCar.speed) / 545);
-    else audio.setEngine(false, 0);
-    let siren = 0;
-    if (world.state.stars > 0) {
-      let bestD = Infinity;
-      for (const car of world.state.cars) {
-        if (car.kind !== 'police') continue;
-        const d = Math.hypot(car.x - p.x, car.y - p.y);
-        if (d < bestD) bestD = d;
-      }
-      if (bestD < 950) siren = 1 - bestD / 950;
-    }
-    audio.setSiren(screen === SCREEN_PLAY ? siren : 0);
-
-    let nearCar = false;
-    if (!p.inCar) {
-      for (const car of world.state.cars) {
-        if (Math.hypot(car.x - p.x, car.y - p.y) < PLAYER.enterRange + 30) { nearCar = true; break; }
-      }
-    }
-    renderer.draw(world.state, screen, {
-      hasSave: !!save,
-      muted: audio.isMuted(),
-      storyDone: world.state.mission.done,
-      nearCar,
-    });
+    world.update(STEP, { ...IDLE, aimAngle: world.player.angle }, audio);
+    return;
   }
+  if (screen === 'paused') {
+    if (actions & ACTION_PAUSE) screen = 'playing';
+    return;
+  }
+  // playing
+  if (actions & ACTION_PAUSE) {
+    screen = 'paused';
+    return;
+  }
+  const ctl = controlsForPlayer();
+  ctl.interact = !!(actions & ACTION_INTERACT);
+  world.update(STEP, ctl, audio);
+}
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    }
+// Screenshot staging: build the scene, settle it with scripted controls,
+// render twice (the second frame carries the settled lighting), then signal.
+if (shotName) {
+  setupShot(world, shotName);
+  screen = shotName === 'start' ? 'title' : 'playing';
+  const seconds = SHOT_STEP_SECONDS[shotName] || 1;
+  const steps = Math.round(seconds / STEP);
+  for (let i = 0; i < steps; i += 1) {
+    world.update(STEP, shotControls(shotName, world), silentAudio);
+  }
+  renderer.render(world, screen, { hasSave: false, muted: true, pointer: null });
+  requestAnimationFrame(() => {
+    renderer.render(world, screen, { hasSave: false, muted: true, pointer: null });
+    window.__shotReady = true;
   });
-
-  world.reset();
-  announce('Neon Bay. Press Enter to start.');
+} else {
+  let last = performance.now();
+  let accumulator = 0;
+  const frame = (now) => {
+    requestAnimationFrame(frame);
+    let dt = (now - last) / 1000;
+    last = now;
+    if (dt > 0.25) dt = 0.25;
+    accumulator += dt;
+    const actions = input.takeActions();
+    let first = true;
+    while (accumulator >= STEP) {
+      stepOnce(first ? actions : 0);
+      first = false;
+      accumulator -= STEP;
+    }
+    renderer.render(world, screen, {
+      hasSave: hasSave(),
+      muted: audio.isMuted(),
+      pointer: input.pointer,
+    });
+  };
   requestAnimationFrame(frame);
 }
 
-if (shot) runShot(shot);
-else runGame();
+// A handle for automated playtests and curious players in the console.
+window.__neonBay = { get world() { return world; }, saveGame, loadGame };

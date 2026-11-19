@@ -1,101 +1,101 @@
-// The screenshot scenes behind ?shot=start|play|chase|end. Each one stages the
-// real simulation from a fresh world with the scene's seed and steps it forward
-// with a scripted driver, so the frame is what the game really looks like and
-// the same seed always gives the same frame.
-import { STEP } from './config.js';
-import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// NEON BAY — deterministic screenshot scenes. The dossier builder asks the game
+// for ?shot=<name>&seed=<n>; main.js builds a fresh world, calls setupShot to
+// stage the scene, steps the simulation with the scripted controls from
+// shotControls for SHOT_STEP_SECONDS, renders, and only then raises
+// window.__shotReady. Everything here uses the world's public surface, so a
+// scene is just a saved moment of real play: the title over the living city, a
+// getaway drive with the law converging, the beach shootout from Mission 3,
+// and the quiet night after the story is done.
 
-const IDLE = { mx: 0, my: 0, run: false, attack: false, interact: false, aimX: 0, aimY: 0 };
+export const SHOT_STEP_SECONDS = { start: 0.6, play: 4.6, chase: 3.6, end: 1.4 };
 
-function stepAmbient(world, seconds) {
-  const n = Math.floor(seconds / STEP);
-  for (let i = 0; i < n; i += 1) world.step(STEP, IDLE, true);
-}
-function stepPlay(world, seconds, control) {
-  const n = Math.floor(seconds / STEP);
-  for (let i = 0; i < n; i += 1) world.step(STEP, control, false);
-}
+const NEUTRAL = { moveX: 0, moveY: 0, run: false, attack: false, interact: false, aimAngle: 0 };
 
-function stageStart(world) {
-  world.state.hour = 16.9; // golden afternoon behind the title
-  stepAmbient(world, 5);
-  world.state.toasts.length = 0;
-  return { screen: SCREEN_TITLE };
+function placePlayerInCoupe(world, x, y, angle, speed) {
+  const coupe = world.missionCar;
+  coupe.x = x; coupe.y = y; coupe.angle = angle; coupe.speed = speed;
+  coupe.driver = 'player';
+  world.player.car = coupe;
+  world.player.x = x; world.player.y = y; world.player.angle = angle;
+  return coupe;
 }
 
-function stagePlay(world) {
-  // A getaway already in motion: the player floors a sedan down the boardwalk
-  // road at dusk with three stars and the law arriving.
-  stepAmbient(world, 1.5);
-  const state = world.state;
-  let car = null;
-  for (const c of state.cars) if (c.kind === 'parked') { car = c; break; }
-  if (!car) car = state.cars[0];
-  car.x = 3889; car.y = 1080; car.angle = Math.PI / 2; car.speed = 330;
-  car.driver = 'player';
-  state.player.inCar = car;
-  state.player.x = car.x; state.player.y = car.y;
-  state.player.hasGun = true;
-  state.heat = 262;
-  const drive = { mx: 0, my: -1, run: false, attack: false, interact: false, aimX: car.x, aimY: car.y + 300 };
-  stepPlay(world, 3.4, drive);
-  return { screen: SCREEN_PLAY };
-}
-
-function stageChase(world) {
-  // On foot on the beach at dusk, pistol out, patrols closing in.
-  stepAmbient(world, 1.5);
-  const state = world.state;
-  state.player.x = 4140; state.player.y = 1760;
-  state.player.hasGun = true;
-  state.money = 640;
-  state.heat = 305;
-  // Run along the sand while firing at the nearest trouble, as a player would.
-  for (let i = 0; i < Math.floor(2.6 / STEP); i += 1) {
-    let tx = state.player.x + 200, ty = state.player.y;
-    let bestD = Infinity;
-    for (const c of state.cops) { const d = Math.hypot(c.x - state.player.x, c.y - state.player.y); if (d < bestD) { bestD = d; tx = c.x; ty = c.y; } }
-    for (const car of state.cars) {
-      if (car.kind !== 'police') continue;
-      const d = Math.hypot(car.x - state.player.x, car.y - state.player.y);
-      if (d < bestD) { bestD = d; tx = car.x; ty = car.y; }
+export function setupShot(world, name) {
+  const places = world.city.places;
+  switch (name) {
+    case 'play': {
+      // Fresh from Mission 1: the coupe is rolling east along the shore road
+      // with three stars on it and the package run about to begin.
+      world.restore({
+        money: 250, missionIndex: 1, hasGun: true,
+        x: 3050, y: 1591, health: 100, timeHours: 18.05,
+        stats: { stolen: 1, kills: 0, missions: 1, shotsFired: 0 },
+      });
+      placePlayerInCoupe(world, 3050, 1591, 0, 330);
+      world.heat = 255;
+      world.unseenFor = 0;
+      break;
     }
-    world.step(STEP, { mx: 1, my: 0, run: true, attack: i % 30 < 14, interact: false, aimX: tx, aimY: ty }, false);
+    case 'chase': {
+      // Mission 3 on the sand: dealers in front, police coming down the beach.
+      world.restore({
+        money: 650, missionIndex: 2, hasGun: true,
+        x: 4052, y: 1912, health: 82, timeHours: 18.5,
+        stats: { stolen: 1, kills: 0, missions: 2, shotsFired: 6 },
+      });
+      world.heat = 290;
+      world.unseenFor = 0;
+      world.player.angle = Math.atan2(1830 - 1912, 4170 - 4052);
+      break;
+    }
+    case 'end': {
+      // The story is done. Night, the gold coupe parked at Taller Sol, and the
+      // driver standing beside it taking in the neon.
+      world.restore({
+        money: 2800, missionIndex: 4, hasGun: true,
+        x: places.garage.x - 70, y: places.garage.y + 26, health: 100, timeHours: 21.35,
+        stats: { stolen: 4, kills: 3, missions: 4, shotsFired: 21 },
+      });
+      const coupe = world.missionCar;
+      coupe.x = places.garage.x; coupe.y = places.garage.y;
+      coupe.angle = Math.PI / 2; coupe.speed = 0; coupe.driver = null;
+      world.player.car = null;
+      world.player.x = places.garage.x - 70;
+      world.player.y = places.garage.y + 26;
+      world.player.angle = 0.4;
+      world.storyDoneTimer = 5;
+      break;
+    }
+    case 'start':
+    default: {
+      // The title screen watches the city wake up at golden hour, from the
+      // boardwalk above the beach road.
+      world.player.x = 3860;
+      world.player.y = 1500;
+      world.player.angle = Math.PI / 3;
+      world.timeHours = 17.58;
+      break;
+    }
   }
-  state.toasts.length = 0;
-  world.toast('The law is closing in', 'Four stars on the sand — run or fight.');
-  return { screen: SCREEN_PLAY };
 }
 
-function stageEnd(world) {
-  // After the big score: story complete, night neon, the gold coupe outside the
-  // hideout and the bay still alive.
-  stepAmbient(world, 2);
-  const state = world.state;
-  state.mission.done = true;
-  state.mission.active = false;
-  state.mission.index = 4;
-  state.objective = null;
-  state.objectiveText = 'Free roam — the bay is yours';
-  state.money = 2965;
-  state.earned = 2965;
-  state.player.hasGun = true;
-  state.hour = 20.4;
-  if (state.targetCar) {
-    state.targetCar.x = 3090; state.targetCar.y = 3160; state.targetCar.angle = 0.4;
-    state.targetCar.missionTarget = false;
-    state.player.x = 3040; state.player.y = 3206;
+/** Scripted controls while a shot scene settles. */
+export function shotControls(name, world) {
+  if (name === 'play') {
+    // Keep the coupe rolling east; the wanted system brings the frame to life.
+    return { ...NEUTRAL, moveY: -1, aimAngle: 0 };
   }
-  state.toasts.length = 0;
-  world.toast('NEON BAY — story complete', 'Free roam: the city, the cops and the beach are still out there.');
-  stepPlay(world, 1.2, IDLE);
-  return { screen: SCREEN_PLAY };
-}
-
-export function stageShot(name, world) {
-  world.reset();
-  if (name === 'play') return stagePlay(world);
-  if (name === 'chase') return stageChase(world);
-  if (name === 'end') return stageEnd(world);
-  return stageStart(world);
+  if (name === 'chase') {
+    // Aim at the nearest living dealer and keep firing, like a player would.
+    let best = null, bd = Infinity;
+    for (const ped of world.peds) {
+      if (ped.dealer && !ped.dead) {
+        const d = (ped.x - world.player.x) ** 2 + (ped.y - world.player.y) ** 2;
+        if (d < bd) { bd = d; best = ped; }
+      }
+    }
+    const aim = best ? Math.atan2(best.y - world.player.y, best.x - world.player.x) : world.player.angle;
+    return { ...NEUTRAL, attack: true, aimAngle: aim };
+  }
+  return { ...NEUTRAL, aimAngle: world.player.angle };
 }
