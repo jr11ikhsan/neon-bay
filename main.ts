@@ -10,7 +10,7 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -56,12 +56,16 @@ function measure(dir) {
 const gameStats = measure(join(out, 'game'));
 const shotsDir = join(out, 'screenshots');
 const shotNames = existsSync(shotsDir) ? readdirSync(shotsDir).filter(n => n.endsWith('.jpg')).sort() : [];
-const dossierBytes = statSync(join(out, 'dossier.json')).size;
+// The text cap applies to the dossier's text field (the source outline),
+// not to the whole file — the images ride along as base64 on top of it.
+const dossier = JSON.parse(readFileSync(join(out, 'dossier.json'), 'utf8'));
+const dossierTextBytes = typeof dossier.text === 'string' ? Buffer.byteLength(dossier.text) : 0;
+const dossierFileBytes = statSync(join(out, 'dossier.json')).size;
 console.log('— hand-in summary (measured from disk) —');
 console.log('game/: ' + gameStats.files + ' files, ' + gameStats.bytes + ' bytes (caps: 993 files, 50331648 bytes)');
 for (const n of shotNames) console.log('screenshots/' + n + ': ' + statSync(join(shotsDir, n)).size + ' bytes (cap: 262144)');
 console.log('screenshots: ' + shotNames.length + ' (cap: 4)');
-console.log('dossier.json: ' + dossierBytes + ' bytes (text cap: 163840)');
+console.log('dossier text: ' + dossierTextBytes + ' bytes (cap: 163840); dossier.json file: ' + dossierFileBytes + ' bytes');
 const overCap = gameStats.files > 993 || gameStats.bytes > 50331648 || shotNames.length > 4 ||
-  shotNames.some(n => statSync(join(shotsDir, n)).size > 262144) || dossierBytes > 163840;
+  shotNames.some(n => statSync(join(shotsDir, n)).size > 262144) || dossierTextBytes > 163840;
 console.log(overCap ? 'WARNING: a hand-in cap is exceeded — do not submit this build.' : 'all hand-in caps satisfied.');
